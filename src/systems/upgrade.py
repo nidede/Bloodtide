@@ -3,7 +3,6 @@
 """
 import random
 from entities.weapons.base import Upgrade
-from entities import GENERAL_UPGRADES
 
 
 def roll_upgrades(player, weapon, count=3):
@@ -16,7 +15,7 @@ def roll_upgrades(player, weapon, count=3):
         ]
 
     available = []
-    for uid, name, desc, color, fn in GENERAL_UPGRADES:
+    for uid, name, desc, color, fn in player.GENERAL_UPGRADES:
         if uid == "dash" and player.has_dash:
             continue
         available.append(Upgrade(uid, name, desc, color, fn))

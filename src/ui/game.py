@@ -143,45 +143,46 @@ class WeaponSelectScreen:
         self.font_title = get_font(36)
         self.font_name = get_font(28)
         self.font_desc = get_font(16)
+        self.card_w = 220
+        self.card_h = 240
+        self.padding = 50
+
+    def _layout(self):
+        """计算卡片布局"""
+        total_w = self.card_w * len(self.weapons) + self.padding * (len(self.weapons) - 1)
+        start_x = (ScreenConfig.WIDTH - total_w) // 2
+        y = (ScreenConfig.HEIGHT - self.card_h) // 2 - 30
+        return start_x, y
 
     def handle_event(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN:
             mx, my = event.pos
-            card_w, card_h = 200, 200
-            padding = 40
-            total_w = card_w * len(self.weapons) + padding * (len(self.weapons) - 1)
-            start_x = (ScreenConfig.WIDTH - total_w) // 2
-            y = (ScreenConfig.HEIGHT - card_h) // 2
-
+            start_x, y = self._layout()
             for i, weapon_cls in enumerate(self.weapons):
-                cx = start_x + i * (card_w + padding)
-                if cx <= mx <= cx + card_w and y <= my <= y + card_h:
+                cx = start_x + i * (self.card_w + self.padding)
+                if cx <= mx <= cx + self.card_w and y <= my <= y + self.card_h:
                     self.selected = weapon_cls
                     return True
         return False
 
     def draw(self, surface):
         surface.fill(Color.BG_COLOR)
-        
+
         title = self.font_title.render("选择武器", True, Color.WHITE)
         surface.blit(title, ((ScreenConfig.WIDTH - title.get_width()) // 2, 120))
-        
+
         subtitle = self.font_desc.render("选择一件武器开始游戏", True, Color.LIGHT_GRAY)
         surface.blit(subtitle, ((ScreenConfig.WIDTH - subtitle.get_width()) // 2, 170))
-        
-        card_w, card_h = 220, 240
-        padding = 50
-        total_w = card_w * len(self.weapons) + padding * (len(self.weapons) - 1)
-        start_x = (ScreenConfig.WIDTH - total_w) // 2
-        y = (ScreenConfig.HEIGHT - card_h) // 2 - 30
+
+        start_x, y = self._layout()
         
         mx, my = pygame.mouse.get_pos()
         for i, weapon_cls in enumerate(self.weapons):
-            cx = start_x + i * (card_w + padding)
-            is_hover = cx <= mx <= cx + card_w and y <= my <= y + card_h
+            cx = start_x + i * (self.card_w + self.padding)
+            is_hover = cx <= mx <= cx + self.card_w and y <= my <= y + self.card_h
             
             # 卡片背景
-            card_rect = pygame.Rect(cx, y, card_w, card_h)
+            card_rect = pygame.Rect(cx, y, self.card_w, self.card_h)
             if is_hover:
                 pygame.draw.rect(surface, Color.CARD_BG_HOVER, card_rect, border_radius=15)
                 pygame.draw.rect(surface, weapon_cls.color, card_rect, 3, border_radius=15)
@@ -190,10 +191,10 @@ class WeaponSelectScreen:
                 pygame.draw.rect(surface, weapon_cls.color, card_rect, 2, border_radius=15)
 
             # 顶部装饰条
-            pygame.draw.rect(surface, weapon_cls.color, (cx + 20, y + 20, card_w - 40, 6), border_radius=3)
+            pygame.draw.rect(surface, weapon_cls.color, (cx + 20, y + 20, self.card_w - 40, 6), border_radius=3)
             
             # 武器图标
-            icon_x = cx + card_w // 2
+            icon_x = cx + self.card_w // 2
             icon_y = y + 80
             pygame.draw.circle(surface, weapon_cls.color, (icon_x, icon_y), 40)
             pygame.draw.circle(surface, Color.BG_COLOR, (icon_x, icon_y), 32)
@@ -201,17 +202,17 @@ class WeaponSelectScreen:
             
             # 武器名称
             name = self.font_name.render(weapon_cls.name, True, Color.WHITE)
-            surface.blit(name, (cx + (card_w - name.get_width()) // 2, icon_y + 55))
+            surface.blit(name, (cx + (self.card_w - name.get_width()) // 2, icon_y + 55))
             
             # 武器描述
             desc_lines = weapon_cls.desc.split('|')
             for j, line in enumerate(desc_lines):
                 desc = self.font_desc.render(line.strip(), True, Color.LIGHT_GRAY)
-                surface.blit(desc, (cx + (card_w - desc.get_width()) // 2, icon_y + 90 + j * 20))
+                surface.blit(desc, (cx + (self.card_w - desc.get_width()) // 2, icon_y + 90 + j * 20))
             
             # 点击提示
             hint = self.font_desc.render("点击选择", True, Color.LIGHT_GRAY if is_hover else (100, 100, 120))
-            surface.blit(hint, (cx + (card_w - hint.get_width()) // 2, y + card_h - 30))
+            surface.blit(hint, (cx + (self.card_w - hint.get_width()) // 2, y + self.card_h - 30))
 
 
 class UpgradeScreen:

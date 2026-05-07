@@ -13,8 +13,7 @@ class EventType(Enum):
     PLAYER_HIT = auto()
     PROJECTILE_HIT = auto()
     
-    # 掉落相关
-    ORB_COLLECTED = auto()
+
     
     # UI相关
     FLOATING_TEXT = auto()

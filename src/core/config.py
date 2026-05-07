@@ -139,7 +139,6 @@ class PlayerConfig:
     REGEN = 0
     XP_MULTIPLIER = 1.0
     THORNS = 0
-    MAGNET_RANGE = 0
     DASH_SPEED_BOOST = 720  # 像素/秒（原12像素/帧 × 60帧）
     DASH_DURATION_DECAY = 0.85
     DASH_COOLDOWN_FRAMES = 180  # 帧（转换为秒：/60）
@@ -164,16 +163,6 @@ class WaveConfig:
     XP_TO_LEVEL_MULTIPLIER = 1.4
 
 
-# ============ 经验球 ============
-class OrbConfig:
-    BASE_MAGNET_RANGE = 50
-    BASE_SIZE = 3
-    MAX_SIZE = 8
-    MAGNET_BOOST_RANGE = 400   # 磁铁经验球吸引力范围
-    MAGNET_BOOST_DURATION = 3.0  # 秒（全图磁力持续时间）
-    MAGNET_DROP_CHANCE = 0.05   # 掉落概率
-
-
 # ============ 粒子特效 ============
 class ParticleConfig:
     # 基础参数
@@ -187,12 +176,6 @@ class ParticleConfig:
     FLOATING_TEXT_LIFETIME = 0.5  # 秒
     FLOATING_TEXT_SIZE = 20
 
-    # 经验球拾取
-    ORB_MAGNET_SPEED = 800  # 磁铁球速度
-    ORB_GLOBAL_MAGNET_SPEED = 1200  # 全图磁铁速度
-    ORB_MIN_SPEED = 180  # 最小跟随速度
-    ORB_BASE_SPEED = 480  # 基础跟随速度
-    ORB_GLOBAL_MAGNET_RANGE = 10000  # 全图磁铁范围
 
 
 # ============ 战斗系统 ============
@@ -207,10 +190,7 @@ class CombatConfig:
     RETREAT_SPEED_RATIO = 0.3  # 撤退时速度比例
     CHASE_SPEED_RATIO = 0.5  # 屏幕外追击速度比例
 
-    # 死亡掉落
-    BOSS_ORB_COUNT = 5
-    NORMAL_ORB_COUNT = 1
-    ORB_DROP_OFFSET = 15  # 随机偏移范围
+    # 死亡特效
     DEATH_PARTICLE_COUNT = 15  # 死亡粒子数量
     PLAYER_DEATH_PARTICLE_COUNT = 50
     PARTICLE_DEATH_SPEED = 240  # 死亡粒子速度

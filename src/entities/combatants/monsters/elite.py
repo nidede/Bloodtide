@@ -2,12 +2,14 @@
 import math
 import pygame
 from core.config import Color
-from .base import BaseMonster
+from .base import BaseMonster, MonsterRegistry
+from entities.weapons.enemy.melee import EnemyMeleeWeapon
 
 
+@MonsterRegistry.register
 class EliteMonster(BaseMonster):
     """精英怪物 - 高属性"""
-    
+
     TYPE = "elite"
     HP_BASE = 80
     HP_PER_LVL = 25
@@ -21,12 +23,10 @@ class EliteMonster(BaseMonster):
     XP_PER_LVL = 8
     MIN_WAVE = 3
     SPAWN_WEIGHT = 0.10
-    
-    def draw(self, surface, cam_x=0, cam_y=0):
-        """绘制为六边形（表示精英）"""
-        color = Color.WHITE if self.flash_timer > 0 else self.color
-        sx, sy = int(self.x - cam_x), int(self.y - cam_y)
-        
+    weapon_class = EnemyMeleeWeapon
+
+    def _draw_shape(self, surface, color, sx, sy):
+        """六边形表示精英"""
         points = []
         for i in range(6):
             a = math.pi / 3 * i - math.pi / 6
@@ -34,5 +34,3 @@ class EliteMonster(BaseMonster):
                           int(sy + self.size * math.sin(a))))
         pygame.draw.polygon(surface, color, points)
         pygame.draw.polygon(surface, Color.WHITE, points, 2)
-        
-        self._draw_health_bar(surface, sx, sy)

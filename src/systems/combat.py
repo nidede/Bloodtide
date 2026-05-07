@@ -1,120 +1,115 @@
 """
-战斗系统 - 怪物碰撞、伤害计算、死亡处理
+战斗系统 - 统一编排战斗管线
 """
 import math
-import random
-from core.config import Color, OrbConfig, CombatConfig, MonsterConfig
+from core.config import Color, CombatConfig
 
 
 class CombatSystem:
-    """战斗系统 - 处理所有战斗相关逻辑"""
+    """战斗系统 - 处理所有战斗相关逻辑，对外提供统一的 update() 接口"""
 
     def __init__(self):
         self._dead_monsters = set()
-        self._dead_orbs = set()
 
-    def update_projectiles(self, projectiles, monsters, player, particles, floating_texts, dt):
-        """处理投射物与怪物的碰撞 - 只负责碰撞检测，伤害逻辑由投射物自己处理"""
+    def update(self, monsters, player, projectiles, particles, floating_texts, dt, is_visible):
+        """执行完整的战斗管线：投射物碰撞 → 怪物AI/攻击 → 死亡处理 → 清理
+
+        Returns:
+            (damage_taken, leveled_players): 玩家受伤量, 升级的玩家集合
+        """
+        hp_before = player.hp
+
+        # 1. 投射物碰撞
+        self.update_projectiles(projectiles, monsters, [player], particles, floating_texts, dt)
+
+        # 2. 怪物AI、移动和攻击
+        self.update_monsters(monsters, player, projectiles, particles, floating_texts, dt, is_visible)
+
+        # 3. 死亡处理
+        damage_taken = max(0, hp_before - player.hp)
+        leveled_players = self.process_dead_monsters(monsters, [player], particles, floating_texts)
+
+        # 4. 清理
+        self.cleanup(monsters)
+        projectiles[:] = [p for p in projectiles if p.alive]
+
+        return damage_taken, leveled_players
+
+    def update_projectiles(self, projectiles, monsters, players, particles, floating_texts, dt):
+        """处理投射物碰撞 - 碰撞检测委托武器 deal_damage() 处理伤害"""
         for proj in projectiles:
-            proj.update(dt)
-            
-            # 怪物子弹：只检查与玩家的碰撞
-            is_monster_bullet = hasattr(proj.owner, 'monster_type') and proj.owner is not None
-            if is_monster_bullet:
-                dist = math.hypot(proj.x - player.x, proj.y - player.y)
-                if dist < proj.size + player.size:
-                    player.take_damage(proj.damage, particles)
-                    floating_texts.append(self._create_floating_text(
-                        player.x, player.y - player.size - 10,
-                        str(proj.damage), Color.RED, 22
-                    ))
-                    proj.alive = False
+            if not proj.alive:
                 continue
-            
-            # 玩家子弹：碰撞检测 + 委托投射物处理伤害
-            for monster in monsters:
-                if proj.owner is not None and proj.owner is monster:
-                    continue
-                if id(monster) in proj.hit_monsters:
-                    continue
-                dist = math.hypot(proj.x - monster.x, proj.y - monster.y)
-                if dist < proj.size + monster.size:
-                    damage, is_crit = proj.deal_damage(monster, player, particles, floating_texts)
 
-                    for _ in range(CombatConfig.HIT_PARTICLE_COUNT):
-                        particles.append(
-                            self._create_particle(proj.x, proj.y, Color.YELLOW,
-                                                  speed=CombatConfig.HIT_PARTICLE_SPEED,
-                                                  lifetime=CombatConfig.HIT_PARTICLE_LIFETIME)
-                        )
-                    break
+            proj.update(dt)
+
+            # 出界/超时死亡（proj.update() 内部设 alive=False），直接消失
+            if not proj.alive:
+                continue
+
+            if proj.is_enemy:
+                # 敌方投射物：检查与玩家的碰撞
+                for player in players:
+                    if id(player) in proj.hit_set:
+                        continue
+                    dist = math.hypot(proj.x - player.x, proj.y - player.y)
+                    if dist < proj.size + player.size:
+                        proj.weapon.deal_damage(player, players, proj.owner, proj, particles, floating_texts)
+                        proj.on_hit(player)
+                        break
+            else:
+                # 玩家投射物：碰撞检测 + 委托武器处理伤害
+                for monster in monsters:
+                    if monster.dead or id(monster) in proj.hit_set:
+                        continue
+                    dist = math.hypot(proj.x - monster.x, proj.y - monster.y)
+                    if dist < proj.size + monster.size:
+                        attacker = proj.owner or players[0] if players else None
+                        proj.weapon.deal_damage(monster, monsters, attacker, proj, particles, floating_texts)
+
+                        # 武器自行处理命中特效时（如导弹爆炸），跳过默认粒子
+                        if not getattr(proj.weapon, 'handles_own_particles', False):
+                            for _ in range(CombatConfig.HIT_PARTICLE_COUNT):
+                                particles.append(
+                                    self._create_particle(proj.x, proj.y, Color.YELLOW,
+                                                          speed=CombatConfig.HIT_PARTICLE_SPEED,
+                                                          lifetime=CombatConfig.HIT_PARTICLE_LIFETIME)
+                                )
+
+                        proj.on_hit(monster)
+                        break
 
     def update_monsters(self, monsters, player, projectiles, particles, floating_texts, dt, is_visible):
-        """处理怪物AI、移动和近战碰撞"""
+        """处理怪物AI、移动和攻击 - 统一调用 monster.update() + monster.attack()"""
+        hp_before = player.hp
         for monster in monsters:
             if is_visible(monster.x, monster.y, CombatConfig.MONSTER_VISIBLE_RANGE):
-                if monster.monster_type == "ranged":
-                    dist = math.hypot(player.x - monster.x, player.y - monster.y)
-                    dx = player.x - monster.x
-                    dy = player.y - monster.y
-                    if dist > 0:
-                        if dist < CombatConfig.MELEE_RANGE:
-                            move_dx = -(dx / dist) * monster.speed * dt
-                            move_dy = -(dy / dist) * monster.speed * dt
-                        elif dist < CombatConfig.OPTIMAL_RANGE:
-                            move_dx = (dx / dist) * monster.speed * CombatConfig.RETREAT_SPEED_RATIO * dt
-                            move_dy = (dy / dist) * monster.speed * CombatConfig.RETREAT_SPEED_RATIO * dt
-                        else:
-                            move_dx = (dx / dist) * monster.speed * dt
-                            move_dy = (dy / dist) * monster.speed * dt
-                        monster.x += move_dx
-                        monster.y += move_dy
-                    monster.attack_cooldown = max(0, monster.attack_cooldown - dt)
-                    monster.flash_timer = max(0, monster.flash_timer - dt)
-                else:
-                    monster.update(player, dt)
+                monster.update(player, dt)
             else:
+                # 屏幕外：简单追击
                 monster.attack_cooldown = max(0, monster.attack_cooldown - dt)
                 monster.flash_timer = max(0, monster.flash_timer - dt)
                 dx = player.x - monster.x
                 dy = player.y - monster.y
                 dist = math.hypot(dx, dy)
                 if dist > 0 and dist < CombatConfig.DETECTION_RANGE:
-                    monster.x += (dx / dist) * monster.speed * CombatConfig.CHASE_SPEED_RATIO
+                    monster.x += (dx / dist) * monster.speed * CombatConfig.CHASE_SPEED_RATIO * dt
+                    monster.y += (dy / dist) * monster.speed * CombatConfig.CHASE_SPEED_RATIO * dt
 
-            if hasattr(monster, 'attack'):
-                monster.attack(player, projectiles)
-            if monster.collides_with_player(player) and monster.attack_cooldown <= 0:
-                dmg = player.take_damage(monster.damage, particles)
-                monster.attack_cooldown = MonsterConfig.ATTACK_COOLDOWN
+            # 统一攻击：远程返回 Projectile[]，近战内部处理碰撞伤害
+            new_projs = monster.attack([player], particles, floating_texts, dt)
+            projectiles.extend(new_projs)
+        return max(0, hp_before - player.hp)
 
-                if player.thorns > 0:
-                    monster.hp -= player.thorns
-                    floating_texts.append(self._create_floating_text(
-                        monster.x, monster.y - monster.size,
-                        str(player.thorns), Color.PURPLE, 16
-                    ))
-
-                if dmg > 0:
-                    floating_texts.append(self._create_floating_text(
-                        player.x, player.y - player.size - 10,
-                        str(dmg), Color.RED, 22
-                    ))
-                    return dmg
-        return 0
-
-    def process_dead_monsters(self, monsters, player, xp_orbs, particles, floating_texts):
-        """处理怪物死亡和掉落"""
+    def process_dead_monsters(self, monsters, players, particles, floating_texts):
+        """处理怪物死亡 - 直接给所有玩家加经验，返回升级的玩家集合"""
+        leveled_players = set()
         for m in monsters:
             if m.dead:
-                player.kills += 1
-                orb_count = CombatConfig.BOSS_ORB_COUNT if m.monster_type == "boss" else CombatConfig.NORMAL_ORB_COUNT
-                for _ in range(orb_count):
-                    ox = m.x + random.randint(-CombatConfig.ORB_DROP_OFFSET, CombatConfig.ORB_DROP_OFFSET)
-                    oy = m.y + random.randint(-CombatConfig.ORB_DROP_OFFSET, CombatConfig.ORB_DROP_OFFSET)
-                    is_magnet = random.random() < OrbConfig.MAGNET_DROP_CHANCE
-                    from ui.effects import XPOrb
-                    xp_orbs.append(XPOrb(ox, oy, m.xp_value // orb_count, is_magnet))
+                for player in players:
+                    player.kills += 1
+                    if player.gain_xp(m.xp_value):
+                        leveled_players.add(player)
                 for _ in range(CombatConfig.DEATH_PARTICLE_COUNT):
                     particles.append(
                         self._create_particle(m.x, m.y, m.color,
@@ -122,24 +117,12 @@ class CombatSystem:
                                               lifetime=CombatConfig.PARTICLE_DEATH_LIFETIME)
                     )
                 self._dead_monsters.add(id(m))
+        return leveled_players
 
-    def cleanup(self, monsters, xp_orbs):
-        """清理死亡的怪物和经验球"""
+    def cleanup(self, monsters):
+        """清理死亡的怪物"""
         monsters[:] = [m for m in monsters if id(m) not in self._dead_monsters]
         self._dead_monsters.clear()
-        xp_orbs[:] = [o for o in xp_orbs if id(o) not in self._dead_orbs]
-        self._dead_orbs.clear()
-
-    def mark_orb_dead(self, orb_id):
-        """标记经验球为待删除"""
-        self._dead_orbs.add(orb_id)
-
-    def handle_explosions(self, projectiles, monsters, particles, floating_texts):
-        """处理导弹爆炸"""
-        for proj in projectiles:
-            if hasattr(proj, 'explode') and not proj.alive and not getattr(proj, '_exploded', False):
-                proj._exploded = True
-                proj.explode(monsters, particles, floating_texts)
 
     def check_player_death(self, player, particles):
         """检查玩家是否死亡"""

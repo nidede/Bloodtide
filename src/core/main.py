@@ -19,23 +19,15 @@ import pygame
 import random
 
 from core.config import (ScreenConfig, WORLD_WIDTH, WORLD_HEIGHT, FPS,
-                        GAME_TITLE, Color, OrbConfig, get_font)
+                        GAME_TITLE, Color, get_font)
 from core.camera import Camera
 from entities import Player
-from ui.effects import Particle, FloatingText, XPOrb
-from systems.upgrade import roll_upgrades, GENERAL_UPGRADES
-from ui import (HUD, MenuScreen, NameInputScreen, GameOverScreen, WeaponSelectScreen, UpgradeScreen,
-                MultiplayerMenuScreen, RoomListScreen, WaitingRoomScreen, PauseScreen)
+from ui.effects import Particle, FloatingText
+from systems.upgrade import roll_upgrades
+from ui import (HUD, MenuScreen, GameOverScreen, WeaponSelectScreen, UpgradeScreen, PauseScreen)
 from entities.weapons import get_random_weapons
 from systems.spawner import Spawner
 from systems.combat import CombatSystem
-
-# 多人游戏相关
-try:
-    from network import DiscoveryService, RoomManager, GameSync, SyncMessageHandler
-    NETWORK_AVAILABLE = True
-except ImportError:
-    NETWORK_AVAILABLE = False
 
 
 def _disable_ime():
@@ -82,25 +74,8 @@ class Game:
         self.weapon_select_screen = None
         self.pause_screen = None
 
-        # 多人游戏界面
-        self.multiplayer_screen = None
-        self.room_list_screen = None
-        self.waiting_room_screen = None
-
-        # 多人游戏状态
-        self.discovery_service = None
-        self.room_manager = None
-        self.is_multiplayer_host = False
-        
-        # 游戏同步系统
-        self.game_sync = None
-        self.sync_handler = None
-        self.remote_players = {}  # 远程玩家字典
-
         self.state = "menu"
         self.paused = False
-        self.player_name = ""  # 玩家名字
-        self.name_input_screen = None  # 名字输入界面
         self.keys_down = set()
         self.pressed = pygame.key.get_pressed()
         self.camera = None
@@ -119,12 +94,12 @@ class Game:
         self.projectiles = []
         self.particles = []
         self.floating_texts = []
-        self.xp_orbs = []
         self.upgrade_screen = None
         self.spawner = Spawner()
         self.frame = 0
         self.dt = 0
-        self.screen_shake = 0
+        self.screen_shake = 0  # 震屏剩余时间（秒）
+        self.screen_shake_intensity = 0  # 震屏强度（像素）
         self.game_time = 0
         self.combat = CombatSystem()
 
@@ -146,41 +121,28 @@ class Game:
             ft.update(dt)
         self.floating_texts = [ft for ft in self.floating_texts if not ft.dead]
 
-        if self.state == "waiting_room" and not self.paused:
-            # 在等待室也要处理同步消息，让成员能看到房主的位置
-            self._update_sync()
-            return
-        
         if self.state != "playing" or self.paused:
             return
-        
-        # 更新网络同步
-        self._update_sync()
 
         self.game_time += dt
         if self.screen_shake > 0:
-            self.screen_shake -= 1
+            self.screen_shake = max(0, self.screen_shake - dt)
 
         self.player.update(self.pressed, self.monsters, self.particles, dt)
 
         if self.player.weapon:
             self.player.weapon.update(self.player, self.monsters, self.particles, self.floating_texts, dt)
         if self.pressed[pygame.K_SPACE]:
-            self.player.try_dash(self.particles)
+            if self.player.try_dash():
+                for _ in range(15):
+                    self.particles.append(Particle(self.player.x, self.player.y, Color.BLUE, speed=240, lifetime=0.33))
 
         new_proj = self.player.try_shoot(self.monsters, dt)
         self.projectiles.extend(new_proj)
 
         spawned, wave_complete, wave_changed = self.spawner.update(
             dt, self.monsters, self.camera.offset_x, self.camera.offset_y)
-        
-        # 广播新生成的怪物（仅房主）
-        if self.is_multiplayer_host and spawned:
-            for m in spawned:
-                self.game_sync.broadcast_monster_spawn(
-                    id(m), m.monster_type, m.x, m.y, m.hp
-                )
-        
+
         self.monsters.extend(spawned)
 
         if self.spawner.wave % 5 == 0 and self.spawner.monsters_spawned == 1 and spawned:
@@ -191,51 +153,26 @@ class Game:
             self.floating_texts.append(FloatingText(
                 ScreenConfig.WIDTH // 2, ScreenConfig.HEIGHT // 2,
                 f"第 {self.spawner.wave} 波!", Color.GOLD, 36, 1.5))
-            # 广播波次变化
-            if self.is_multiplayer_host:
-                self.game_sync.broadcast_wave_change(self.spawner.wave)
 
-        self.combat.update_projectiles(
-            self.projectiles, self.monsters, self.player, self.particles, self.floating_texts, dt)
-
-        damage_taken = self.combat.update_monsters(
+        damage_taken, leveled_players = self.combat.update(
             self.monsters, self.player, self.projectiles,
             self.particles, self.floating_texts, dt, self._is_visible)
+
         if damage_taken > 0:
-            self.screen_shake = 5
+            self.screen_shake = 0.15
+            self.screen_shake_intensity = 5
+            for _ in range(8):
+                self.particles.append(Particle(self.player.x, self.player.y, Color.RED, speed=180, lifetime=0.33))
 
-        self.combat.process_dead_monsters(
-            self.monsters, self.player, self.xp_orbs, self.particles, self.floating_texts)
-
-        for orb in self.xp_orbs:
-            collected, is_magnet = orb.update(self.player, dt)
-            if collected:
-                if is_magnet:
-                    self.player.magnet_boost_timer = OrbConfig.MAGNET_BOOST_DURATION
-                    self.player.magnet_boost_range = OrbConfig.MAGNET_BOOST_RANGE
-                    self.player.global_magnet = True
-                    self.floating_texts.append(FloatingText(
-                        self.player.x, self.player.y - 30,
-                        "磁力爆发!", Color.GOLD, 28, 1.0))
-                    for _ in range(20):
-                        self.particles.append(Particle(self.player.x, self.player.y, Color.GOLD, speed=300, lifetime=0.42))
-                leveled = self.player.gain_xp(orb.value)
-                self.particles.append(Particle(self.player.x, self.player.y, Color.GREEN, speed=120, lifetime=0.25))
-                if leveled:
-                    self.state = "upgrade"
-                    upgrades = roll_upgrades(self.player, self.player.weapon, 3)
-                    self.upgrade_screen = UpgradeScreen(upgrades)
-                    self.screen_shake = 8
-                    self.floating_texts.append(FloatingText(
-                        self.player.x, self.player.y - 40,
-                        "LEVEL UP!", Color.GOLD, 32, 1.0))
-                self.combat.mark_orb_dead(id(orb))
-            elif not orb.alive:
-                self.combat.mark_orb_dead(id(orb))
-
-        self.combat.cleanup(self.monsters, self.xp_orbs)
-        self.combat.handle_explosions(self.projectiles, self.monsters, self.particles, self.floating_texts)
-        self.projectiles = [p for p in self.projectiles if p.alive]
+        if self.player in leveled_players:
+            self.state = "upgrade"
+            upgrades = roll_upgrades(self.player, self.player.weapon, 3)
+            self.upgrade_screen = UpgradeScreen(upgrades)
+            self.screen_shake = 0.2
+            self.screen_shake_intensity = 8
+            self.floating_texts.append(FloatingText(
+                self.player.x, self.player.y - 40,
+                "LEVEL UP!", Color.GOLD, 32, 1.0))
 
         if self.player.hp <= 0 and self.state == "playing":
             self.state = "gameover"
@@ -244,8 +181,9 @@ class Game:
 
     def draw(self):
         cx, cy = self.camera.offset_x, self.camera.offset_y
-        sx = random.randint(-self.screen_shake, self.screen_shake) if self.screen_shake > 0 else 0
-        sy = random.randint(-self.screen_shake, self.screen_shake) if self.screen_shake > 0 else 0
+        si = self.screen_shake_intensity
+        sx = random.randint(-si, si) if self.screen_shake > 0 else 0
+        sy = random.randint(-si, si) if self.screen_shake > 0 else 0
 
         self._draw_world(cx + sx, cy + sy)
 
@@ -254,24 +192,6 @@ class Game:
             self.menu_screen.draw(self.screen)
             return
 
-        # 名字输入界面
-        if self.state == "name_input" and self.name_input_screen:
-            self.name_input_screen.draw(self.screen)
-            return
-
-        # 多人游戏界面
-        if self.state == "multiplayer" and self.multiplayer_screen:
-            self.multiplayer_screen.draw(self.screen)
-            return
-        if self.state == "room_list" and self.room_list_screen:
-            self.room_list_screen.draw(self.screen)
-            return
-        if self.state == "waiting_room" and self.waiting_room_screen:
-            self.waiting_room_screen.draw(self.screen)
-            return
-
-        for orb in self.xp_orbs:
-            orb.draw(self.screen, self.frame, cx, cy)
         for m in self.monsters:
             m.draw(self.screen, cx, cy)
         for p in self.projectiles:
@@ -281,8 +201,6 @@ class Game:
             self.player.draw(self.screen, cx, cy)
             if self.player.weapon:
                 self.player.weapon.draw(self.screen, cx, cy, self.player.x, self.player.y)
-            # 绘制远程玩家
-            self._draw_remote_players(cx, cy)
 
         if self.state == "weapon_select" and self.weapon_select_screen:
             self.weapon_select_screen.draw(self.screen)
@@ -370,12 +288,6 @@ class Game:
             color = (200, 50, 50) if m.monster_type == "boss" else (150, 100, 100)
             self.screen.set_at((mm_x + dx, mm_y + dy), color)
 
-        for orb in self.xp_orbs:
-            dx = int(orb.x * scale_x)
-            dy = int(orb.y * scale_y)
-            if 0 <= dx < mm_w and 0 <= dy < mm_h:
-                self.screen.set_at((mm_x + dx, mm_y + dy), Color.GREEN)
-
         px = int(self.player.x * scale_x)
         py = int(self.player.y * scale_y)
         if 0 <= px < mm_w and 0 <= py < mm_h:
@@ -393,67 +305,13 @@ class Game:
             p.draw(self.screen, cx, cy)
         for ft in self.floating_texts:
             ft.draw(self.screen, cx, cy)
-    
-    def _draw_remote_players(self, cx, cy):
-        """绘制远程玩家"""
-        if not self.remote_players:
-            return
-        
-        for player_id, remote in self.remote_players.items():
-            if not remote.alive:
-                continue
-            
-            # 计算屏幕坐标
-            sx = remote.x - cx
-            sy = remote.y - cy
-            
-            # 绘制远程玩家（用矩形表示）
-            size = 40
-            rect = pygame.Rect(sx - size//2, sy - size//2, size, size)
-            
-            # 根据血量设置颜色
-            hp_ratio = remote.hp / 100.0
-            color = (
-                int(255 * (1 - hp_ratio) + 100 * hp_ratio),  # R
-                int(100 * hp_ratio + 100 * (1 - hp_ratio)),  # G
-                int(255 * (1 - hp_ratio))  # B
-            )
-            
-            pygame.draw.rect(self.screen, color, rect, 3)
-            
-            # 绘制玩家名字
-            font = get_font(16)
-            name_text = font.render(remote.name, True, Color.CYAN)
-            self.screen.blit(name_text, (sx - name_text.get_width()//2, sy - size//2 - 20))
-            
-            # 绘制血条
-            bar_width = 50
-            bar_height = 6
-            bar_x = sx - bar_width//2
-            bar_y = sy + size//2 + 5
-            
-            pygame.draw.rect(self.screen, (60, 60, 60), (bar_x, bar_y, bar_width, bar_height))
-            pygame.draw.rect(self.screen, Color.GREEN if hp_ratio > 0.3 else Color.RED,
-                          (bar_x, bar_y, int(bar_width * hp_ratio), bar_height))
 
     def handle_event(self, event):
         if event.type == pygame.KEYDOWN:
             if event.key in self.keys_down:
                 return
             self.keys_down.add(event.key)
-            
-            # 名字输入界面处理键盘事件
-            if self.state == "name_input" and self.name_input_screen:
-                result = self.name_input_screen.handle_event(event)
-                if result == "confirm":
-                    self.player_name = self.name_input_screen.player_name
-                    self._enter_multiplayer_menu()
-                    self.state = "multiplayer"
-                elif result == "back":
-                    self.name_input_screen = None
-                    self.state = "menu"
-                return
-            
+
             if event.key == pygame.K_F11:
                 self.screen = _toggle_fullscreen(self.screen)
             elif event.key == pygame.K_ESCAPE:
@@ -465,12 +323,6 @@ class Game:
                     if not self.paused:
                         self.pause_screen = None
                 elif self.state == "gameover":
-                    self.state = "menu"
-                elif self.state == "name_input":
-                    self.name_input_screen = None
-                    self.state = "menu"
-                elif self.state in ("multiplayer", "room_list", "waiting_room"):
-                    self._exit_multiplayer()
                     self.state = "menu"
             elif event.key == pygame.K_RETURN:
                 if self.state == "menu" or self.state == "gameover":
@@ -484,53 +336,15 @@ class Game:
                 result = self.menu_screen.handle_event(event)
                 if result == "start":
                     self._start_game()
-                elif result == "multiplayer":
-                    self.name_input_screen = NameInputScreen()
-                    self.state = "name_input"
                 elif result == "exit":
                     pygame.quit()
                     sys.exit()
-            elif self.state == "name_input" and self.name_input_screen:
-                result = self.name_input_screen.handle_event(event)
-                if result == "confirm":
-                    self.player_name = self.name_input_screen.player_name
-                    self._enter_multiplayer_menu()
-                    self.state = "multiplayer"
-                elif result == "back":
-                    self.name_input_screen = None
-                    self.state = "menu"
-            elif self.state == "multiplayer" and self.multiplayer_screen:
-                result = self.multiplayer_screen.handle_event(event)
-                if result == "create":
-                    self._create_room()
-                elif result == "join":
-                    self._enter_room_list()
-                elif result == "back":
-                    self.state = "menu"
-            elif self.state == "room_list" and self.room_list_screen:
-                result = self.room_list_screen.handle_event(event)
-                if result == "back":
-                    self.state = "multiplayer"
-                elif result == "refresh":
-                    self._refresh_room_list()
-                elif isinstance(result, tuple) and result[0] == "join":
-                    self._join_room(result[1])
-            elif self.state == "waiting_room" and self.waiting_room_screen:
-                result = self.waiting_room_screen.handle_event(event)
-                if result == "start" and self.is_multiplayer_host:
-                    self._start_multiplayer_game()
-                elif result == "leave":
-                    self._exit_multiplayer()
-                    self.state = "multiplayer"
             elif self.state == "weapon_select" and self.weapon_select_screen:
                 if self.weapon_select_screen.handle_event(event):
                     chosen_cls = self.weapon_select_screen.selected
                     if chosen_cls:
                         self.player.weapon = chosen_cls()
                         self.weapon_select_screen = None
-                        # 多人游戏时，房主选完武器后通知所有成员开始
-                        if self.is_multiplayer_host and self.room_manager:
-                            self.room_manager.broadcast_game_start()
                         self.state = "playing"
             elif self.state == "upgrade" and self.upgrade_screen:
                 if self.upgrade_screen.handle_event(event):
@@ -540,13 +354,11 @@ class Game:
                     self.state = "playing"
                     self.upgrade_screen = None
             elif self.state in ("playing",) and self.paused:
-                # 暂停状态下点击继续按钮
                 if self.pause_screen and self.pause_screen.handle_event(event):
                     self.paused = False
                     self.pause_screen = None
                     return
             elif self.state == "playing" and not self.paused:
-                # 检查暂停按钮点击
                 if self.hud.get_pause_button_rect().collidepoint(event.pos):
                     self.paused = True
                     return
@@ -556,255 +368,6 @@ class Game:
                     self._start_game()
                 elif result == "menu":
                     self.state = "menu"
-
-        elif event.type == pygame.QUIT:
-            pass
-
-    # ============ 多人游戏相关方法 ============
-
-    def _enter_multiplayer_menu(self):
-        """进入多人游戏菜单"""
-        if not NETWORK_AVAILABLE:
-            print("[网络] 网络模块不可用")
-            return
-        self.multiplayer_screen = MultiplayerMenuScreen(self.player_name)
-        self.state = "multiplayer"
-
-    def _create_room(self):
-        """创建房间"""
-        if not NETWORK_AVAILABLE:
-            return
-        self.room_manager = RoomManager(is_host=True)
-        self.room_manager.start_as_host(host_port=8888)
-
-        player_name = self.player_name or "房主"
-        self.discovery_service = DiscoveryService(player_name=player_name)
-        self.discovery_service.start_broadcast(
-            room_id=self.room_manager.room_id,
-            player_count=self.room_manager.player_count,
-            max_players=self.room_manager.max_players
-        )
-
-        self.waiting_room_screen = WaitingRoomScreen(
-            room_id=self.room_manager.room_id,
-            is_host=True,
-            player_name=player_name
-        )
-        self.is_multiplayer_host = True
-        self.state = "waiting_room"
-        
-        # 初始化游戏同步系统
-        self._init_game_sync()
-
-        # 设置玩家回调
-        self.room_manager.on_player_joined = self._on_player_joined
-        self.room_manager.on_player_left = self._on_player_left
-
-    def _enter_room_list(self):
-        """进入房间列表"""
-        if not NETWORK_AVAILABLE:
-            return
-        self.room_list_screen = RoomListScreen()
-        player_name = self.player_name or "玩家"
-        self.discovery_service = DiscoveryService(player_name=player_name)
-        self.discovery_service.on_rooms_updated = self._on_rooms_updated
-        self.discovery_service.start_listening()
-        self.discovery_service.request_room_list()
-        self.state = "room_list"
-
-    def _refresh_room_list(self):
-        """刷新房间列表"""
-        if self.discovery_service:
-            self.discovery_service.request_room_list()
-
-    def _join_room(self, room_info):
-        """加入房间"""
-        if not NETWORK_AVAILABLE:
-            return
-        self.room_manager = RoomManager(is_host=False)
-        player_name = self.player_name or "玩家"
-        
-        # 设置玩家列表回调
-        self.room_manager.on_players_list = self._on_players_list_received
-        # 设置游戏开始回调
-        self.room_manager.on_game_start = self._on_game_start_received
-        
-        # 初始化游戏同步系统
-        self._init_game_sync()
-        
-        if self.room_manager.connect_to_host(room_info.host_ip, player_name=player_name):
-            # 初始化等待室玩家列表（包含自己和已在线的玩家）
-            initial_players = [player_name]
-            if hasattr(self, '_pending_players_list') and self._pending_players_list:
-                initial_players = self._pending_players_list
-                self._pending_players_list = []
-            
-            self.waiting_room_screen = WaitingRoomScreen(
-                room_id=room_info.room_id,
-                is_host=False,
-                player_name=player_name,
-                players=initial_players
-            )
-            print(f"[房间] 创建等待室，玩家列表: {initial_players}")
-            self.is_multiplayer_host = False
-            self.state = "waiting_room"
-        else:
-            print("[网络] 加入房间失败")
-
-    def _exit_multiplayer(self, keep_network=False):
-        """
-        退出多人游戏
-        keep_network=True: 只清理UI，保持网络连接（用于开始游戏）
-        keep_network=False: 完全退出多人游戏
-        """
-        # 停止发现服务（不再需要）
-        if self.discovery_service:
-            self.discovery_service.stop_broadcast()
-            self.discovery_service.stop_listening()
-            self.discovery_service = None
-        
-        if not keep_network:
-            # 完全退出，关闭网络
-            if self.room_manager:
-                self.room_manager.close()
-                self.room_manager = None
-            self.game_sync = None
-            self.sync_handler = None
-            self.remote_players = {}
-            self.is_multiplayer_host = False
-        
-        self.multiplayer_screen = None
-        self.room_list_screen = None
-        self.waiting_room_screen = None
-    
-    def _init_game_sync(self):
-        """初始化游戏同步系统"""
-        self.game_sync = GameSync(is_host=self.is_multiplayer_host)
-        # 生成唯一的 player_id
-        import uuid
-        player_id = str(uuid.uuid4())[:8]
-        self.game_sync.set_player_info(
-            player_id,
-            self.player_name or "Player"
-        )
-        self.game_sync.on_remote_player_update = self._on_remote_player_update
-        self.game_sync.on_player_join = self._on_remote_player_join
-        self.game_sync.on_player_leave = self._on_remote_player_leave
-        
-        # 怪物同步回调
-        self.game_sync.on_monster_spawn = self._on_sync_monster_spawn
-        self.game_sync.on_wave_change = self._on_sync_wave_change
-        
-        # 创建消息处理器
-        def send_sync_msg(msg):
-            if self.room_manager and self.is_multiplayer_host:
-                self.room_manager.broadcast_to_all(msg)
-            elif self.room_manager:
-                self.room_manager.send_to_host(msg)
-        
-        self.sync_handler = SyncMessageHandler(self.game_sync, send_sync_msg)
-        self.remote_players = {}
-        
-        # 设置房间消息回调以接收同步消息
-        if self.room_manager:
-            def sync_callback(msg):
-                self.sync_handler.handle_raw_message(msg)
-            self.room_manager.set_sync_callback(sync_callback)
-    
-    def _on_remote_player_update(self, player_id, state):
-        """远程玩家状态更新"""
-        pass  # 后续在update中处理绘制
-    
-    def _on_remote_player_join(self, player_id, name):
-        """远程玩家加入"""
-        print(f"[Sync] 玩家 {name} 加入了游戏")
-    
-    def _on_remote_player_leave(self, player_id):
-        """远程玩家离开"""
-        print(f"[Sync] 玩家离开了游戏")
-    
-    def _on_sync_monster_spawn(self, monster_id, monster_type, x, y, hp):
-        """同步怪物生成（客户端接收）"""
-        if self.is_multiplayer_host:
-            return  # 房主不需要处理
-        # 从 spawner 获取怪物模板
-        from entities.monsters import Slime, Orc, Boss
-        monster_map = {
-            'slime': Slime,
-            'orc': Orc,
-            'boss': Boss,
-        }
-        monster_cls = monster_map.get(monster_type, Slime)
-        m = monster_cls(x, y)
-        m.hp = hp
-        self.monsters.append(m)
-    
-    def _on_sync_wave_change(self, wave):
-        """同步波次变化（客户端接收）"""
-        if self.is_multiplayer_host:
-            return  # 房主不需要处理
-        self.spawner.wave = wave
-    
-    def _update_sync(self):
-        """更新网络同步"""
-        if not self.sync_handler or not self.game_sync:
-            return
-        
-        # 处理同步消息
-        self.sync_handler.update()
-        
-        # 发送本地玩家状态
-        if self.player:
-            self.game_sync.queue_player_state(
-                self.player.x,
-                self.player.y,
-                self.player.hp,
-                self.player.facing_right
-            )
-        
-        # 更新远程玩家数据
-        self.remote_players = self.game_sync.get_remote_players()
-
-    def _on_rooms_updated(self, rooms):
-        """房间列表更新回调"""
-        if self.room_list_screen:
-            self.room_list_screen.set_rooms(rooms)
-
-    def _on_player_joined(self, player):
-        """玩家加入回调"""
-        print(f"[房间] {player.name} 加入了游戏")
-        if self.waiting_room_screen:
-            self.waiting_room_screen.add_player(player.name)
-
-    def _on_player_left(self, player_id):
-        """玩家离开回调"""
-        print(f"[房间] 玩家 {player_id} 离开了游戏")
-        if self.waiting_room_screen:
-            self.waiting_room_screen.remove_player(player_id)
-
-    def _on_players_list_received(self, players):
-        """收到玩家列表回调"""
-        # 保存玩家列表（供后续使用）
-        self._pending_players_list = [p['name'] for p in players]
-        # 如果等待室已创建，立即更新
-        if self.waiting_room_screen:
-            self.waiting_room_screen.players = list(self._pending_players_list)
-
-    def _on_game_start_received(self):
-        """收到游戏开始回调 - 成员端收到房主的开始指令"""
-        self._exit_multiplayer(keep_network=True)  # 保持网络连接
-        # 成员直接进入游戏状态，不等待武器选择
-        self._reset()
-        self.state = "playing"
-        # 成员获得默认武器
-        from entities.weapons import Missile
-        self.player.weapon = Missile()
-
-    def _start_multiplayer_game(self):
-        """开始多人游戏"""
-        # 注意：不在这里广播 game_start，等房主选完武器后再广播
-        self._exit_multiplayer(keep_network=True)  # 保持网络连接
-        self._start_game()
 
     def run(self):
         pygame.key.set_repeat(200, 50)

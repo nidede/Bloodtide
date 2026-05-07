@@ -1,9 +1,10 @@
 """
 怪物生成器 - 波次生成、刷新逻辑
 """
+import math
 import random
 from core.config import ScreenConfig, WaveConfig, SpawnerConfig, WORLD_WIDTH, WORLD_HEIGHT
-from entities.monsters import MonsterRegistry, Monster
+from entities.combatants.monsters import MonsterRegistry, Monster
 
 
 class Spawner:
@@ -47,11 +48,13 @@ class Spawner:
         return spawned, self.wave_complete, wave_changed
 
     def spawn_boss(self, wave, cam_x, cam_y):
-        """生成 Boss"""
-        angle = random.uniform(0, 6.28)
+        """生成 Boss - 在玩家附近固定距离处"""
+        angle = random.uniform(0, 2 * math.pi)
         dist = SpawnerConfig.BOSS_SPAWN_DISTANCE
-        x = cam_x + ScreenConfig.WIDTH // 2 + random.randint(-SpawnerConfig.SPAWN_OFFSET_RANGE, SpawnerConfig.SPAWN_OFFSET_RANGE)
-        y = cam_y + ScreenConfig.HEIGHT // 2 + random.randint(-SpawnerConfig.SPAWN_OFFSET_RANGE, SpawnerConfig.SPAWN_OFFSET_RANGE)
+        center_x = cam_x + ScreenConfig.WIDTH // 2
+        center_y = cam_y + ScreenConfig.HEIGHT // 2
+        x = center_x + math.cos(angle) * dist + random.randint(-SpawnerConfig.SPAWN_OFFSET_RANGE, SpawnerConfig.SPAWN_OFFSET_RANGE)
+        y = center_y + math.sin(angle) * dist + random.randint(-SpawnerConfig.SPAWN_OFFSET_RANGE, SpawnerConfig.SPAWN_OFFSET_RANGE)
         return Monster("boss", wave, x, y)
 
     def _start_next_wave(self):

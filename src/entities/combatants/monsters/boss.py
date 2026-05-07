@@ -1,13 +1,14 @@
 """Boss怪物 - 每5波出现"""
-import math
 import pygame
 from core.config import Color
-from .base import BaseMonster
+from .base import BaseMonster, MonsterRegistry
+from entities.weapons.enemy.melee import EnemyMeleeWeapon
 
 
+@MonsterRegistry.register
 class BossMonster(BaseMonster):
     """Boss怪物 - 超高属性"""
-    
+
     TYPE = "boss"
     HP_BASE = 500
     HP_PER_LVL = 100
@@ -21,11 +22,10 @@ class BossMonster(BaseMonster):
     XP_PER_LVL = 50
     MIN_WAVE = 5
     SPAWN_WEIGHT = 0.08
+    weapon_class = EnemyMeleeWeapon
     
-    def draw(self, surface, cam_x=0, cam_y=0):
-        """绘制 Boss - 大菱形 + 外发光 + 皇冠装饰"""
-        color = Color.WHITE if self.flash_timer > 0 else self.color
-        sx, sy = int(self.x - cam_x), int(self.y - cam_y)
+    def _draw_shape(self, surface, color, sx, sy):
+        """大菱形 + 外发光 + 皇冠装饰"""
         s = self.size
 
         # 外发光效果（多层轮廓）
@@ -35,7 +35,6 @@ class BossMonster(BaseMonster):
                 (sx, sy - glow_size), (sx + glow_size, sy),
                 (sx, sy + glow_size), (sx - glow_size, sy)
             ]
-            glow_alpha = 60 - i * 15
             glow_color = (color[0] // 3, color[1] // 3, color[2] // 3)
             pygame.draw.polygon(surface, glow_color, glow_points)
 
@@ -55,10 +54,8 @@ class BossMonster(BaseMonster):
 
         # 皇冠装饰（顶部三个小三角）
         crown_y = sy - s - 8
-        for i, offset in enumerate([-12, 0, 12]):
+        for offset in [-12, 0, 12]:
             cx = sx + offset
             crown_size = 6
             crown = [(cx, crown_y - crown_size), (cx - crown_size // 2, crown_y), (cx + crown_size // 2, crown_y)]
             pygame.draw.polygon(surface, Color.YELLOW, crown)
-
-        self._draw_health_bar(surface, sx, sy)

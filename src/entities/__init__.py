@@ -1,6 +1,6 @@
 """
 实体模块
 """
-from .player import Player, Soldier, GENERAL_UPGRADES
-from .monsters import *
-from .weapons import *
+from entities.combatants.player import Player, Soldier
+from entities.combatants.monsters import *
+from entities.weapons import *

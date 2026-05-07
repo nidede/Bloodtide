@@ -1,50 +1,36 @@
 """
-投射物基类
+投射物基类 - 纯飞行实体，只负责移动和绘制
+伤害由 Weapon.deal_damage() 处理
 """
 import math
-import random
 from core.config import Color, WorldConfig, ProjectileConfig, FPS
 from ui.effects import pygame_draw_circle
 
 
 class Projectile:
-    def __init__(self, x, y, angle, damage, speed, crit_chance, crit_damage,
-                 piercing, life_steal, owner):
+    def __init__(self, x, y, angle, speed, weapon=None, owner=None, piercing=0, is_enemy=None):
         self.x = x
         self.y = y
         self.angle = angle
-        self.damage = damage
         self.speed = speed * FPS  # 像素/秒
-        self.crit_chance = crit_chance
-        self.crit_damage = crit_damage
-        self.piercing = piercing
-        self.life_steal = life_steal
-        self.owner = owner
+        self.weapon = weapon      # 所属武器，用于回调 deal_damage
+        self.owner = owner        # 所属实体（玩家/怪物），用于敌我识别
+        self.piercing = piercing  # 剩余穿透次数（由武器设置，CombatSystem 管理）
+        # 自动从 owner 推断阵营，也可手动指定
+        self.is_enemy = is_enemy if is_enemy is not None else getattr(owner, 'is_enemy', False)
         self.size = ProjectileConfig.DEFAULT_SIZE
         self.alive = True
-        self.hit_monsters = set()
+        self.hit_set = set()      # 已命中实体ID集合（防止重复命中）
         self.trail = []
+        self.damage = 0           # 备用伤害值
 
-    def deal_damage(self, monster, player, particles, floating_texts):
-        """对怪物造成伤害 - 子类可重写自定义伤害逻辑"""
-        is_crit = random.random() < self.crit_chance
-        damage = int(self.damage * (self.crit_damage if is_crit else 1))
-        monster.take_damage(damage, is_crit, particles, floating_texts)
-
-        # 吸血
-        if self.life_steal > 0 and player:
-            heal = max(1, int(damage * self.life_steal))
-            player.hp = min(player.max_hp, player.hp + heal)
-
-        self.hit_monsters.add(id(monster))
-
-        # 穿透
+    def on_hit(self, target):
+        """命中目标后的处理 - 记录命中、消耗穿透、判断存活"""
+        self.hit_set.add(id(target))
         if self.piercing > 0:
             self.piercing -= 1
         else:
             self.alive = False
-
-        return damage, is_crit
 
     def update(self, dt):
         self.trail.append((self.x, self.y))
