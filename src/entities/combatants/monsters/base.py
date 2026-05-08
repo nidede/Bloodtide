@@ -111,24 +111,24 @@ class BaseMonster(CombatEntity):
         """检查是否可以攻击"""
         return self.attack_cooldown <= 0
 
-    def attack(self, targets, particles, floating_texts, dt):
+    def attack(self, targets, dt):
         """攻击目标 - 近战怪物默认实现碰撞伤害（委托武器），远程怪物重写返回 Projectile[]
 
         Args:
-            targets: 目标列表（通常是玩家列表）
-            particles: 粒子列表
-            floating_texts: 浮动文字列表
+            targets: 目标列表
             dt: 帧间隔时间
 
         Returns:
             list: 远程怪物返回 Projectile 列表，近战怪物返回空列表
+            list[DamageResult]: 近战伤害结果（由 CombatSystem 处理特效）
         """
+        results = []
         for target in targets:
             if self.collides_with(target) and self.can_attack():
-                self.weapon.deal_damage(target, targets, self, None, particles, floating_texts)
+                results = self.weapon.deal_damage(target, targets, self, None)
                 self.attack_cooldown = self.ATTACK_COOLDOWN
                 break
-        return []
+        return [], results
 
     def collides_with(self, target):
         dist = math.hypot(self.x - target.x, self.y - target.y)

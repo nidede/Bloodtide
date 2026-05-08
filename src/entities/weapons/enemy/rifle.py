@@ -2,7 +2,7 @@
 敌人步枪 - 远程怪物专用
 伤害从 attacker.damage 同步，无暴击和升级树
 """
-from ..base import Weapon
+from ..base import Weapon, DamageResult
 from entities.projectiles import Projectile
 
 
@@ -28,11 +28,8 @@ class EnemyRifle(Weapon):
             projectiles.append(p)
         return projectiles
 
-    def deal_damage(self, target, targets, attacker, proj, particles, floating_texts):
+    def _deal_damage(self, target, targets, attacker, proj):
         """敌人步枪伤害 - 无暴击，伤害跟随怪物属性"""
         damage = getattr(attacker, 'damage', self.damage)
-        actual = target.take_damage(damage, attacker=attacker)
-        self._create_damage_text(target, actual, False, floating_texts)
-        if attacker and hasattr(attacker, 'trigger'):
-            attacker.trigger(attacker.ON_DEAL_DAMAGE, target=target, damage=actual)
-        return actual
+        actual, reaction = target.take_damage(damage, attacker=attacker)
+        return [DamageResult(target, actual)] + reaction

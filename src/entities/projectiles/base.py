@@ -4,7 +4,7 @@
 """
 import math
 from core.config import Color, WorldConfig, ProjectileConfig, FPS
-from ui.effects import pygame_draw_circle
+from core.render import pygame_draw_circle
 
 
 class Projectile:
@@ -22,7 +22,6 @@ class Projectile:
         self.alive = True
         self.hit_set = set()      # 已命中实体ID集合（防止重复命中）
         self.trail = []
-        self.damage = 0           # 备用伤害值
 
     def on_hit(self, target):
         """命中目标后的处理 - 记录命中、消耗穿透、判断存活"""

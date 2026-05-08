@@ -2,10 +2,8 @@
 导弹 - 范围爆炸，可追踪
 """
 import math
-import random
-from ..base import Weapon, Upgrade
+from ..base import Weapon, Upgrade, DamageResult, UPGRADE_ONCE
 from core.config import Color, MissileConfig
-from ui.effects import Particle
 from entities.projectiles import MissileProjectile
 
 
@@ -13,18 +11,17 @@ class Missile(Weapon):
     name = "导弹"
     desc = "爆炸 | 范围伤害"
     color = Color.ORANGE
-    damage = 20
-    fire_rate = 50
+    damage = 30
+    fire_rate = 45
     projectile_count = 1
-    projectile_speed = 4
-    explosion_radius = 65
+    projectile_speed = 5
+    explosion_radius = 75
     homing = False
-    handles_own_particles = True
 
     # 武器升级颜色标准：伤害-RED | 追踪-GREEN | 爆炸-ORANGE | 数量-YELLOW
     upgrades = [
         Upgrade("missile_homing", "追踪弹", "导弹追踪敌人", Color.GREEN,
-                lambda p, w: setattr(w, 'homing', True)),
+                lambda p, w: setattr(w, 'homing', True), UPGRADE_ONCE),
         Upgrade("missile_radius", "扩大爆炸", "爆炸范围 +25, 伤害 +5", Color.ORANGE,
                 lambda p, w: (setattr(w, 'explosion_radius', w.explosion_radius + 25),
                               setattr(w, 'damage', w.damage + 5))),
@@ -47,8 +44,9 @@ class Missile(Weapon):
             projectiles.append(p)
         return projectiles
 
-    def deal_damage(self, target, targets, attacker, proj, particles, floating_texts):
+    def _deal_damage(self, target, targets, attacker, proj):
         """导弹命中 → 爆炸范围伤害"""
+        results = []
         for m in list(targets):
             if m.dead:
                 continue
@@ -56,23 +54,17 @@ class Missile(Weapon):
             if dist < self.explosion_radius:
                 ratio = 1 - dist / self.explosion_radius
                 dmg = max(1, int(self.damage * ratio))
-                actual = m.take_damage(dmg, attacker=attacker)
-                self._create_damage_text(m, actual, False, floating_texts)
-                if attacker and hasattr(attacker, 'trigger'):
-                    attacker.trigger(attacker.ON_DEAL_DAMAGE, target=m, damage=actual)
+                actual, reaction = m.take_damage(dmg, attacker=attacker)
+                results.append(DamageResult(m, actual))
+                results.extend(reaction)
 
-        offset = int(self.explosion_radius * MissileConfig.EXPLOSION_OFFSET_RATIO)
-        for _ in range(MissileConfig.EXPLOSION_PARTICLE_COUNT):
-            angle = random.uniform(0, 2 * math.pi)
-            spd = random.uniform(MissileConfig.EXPLOSION_PARTICLE_SPEED_MIN,
-                                 MissileConfig.EXPLOSION_PARTICLE_SPEED_MAX)
-            particles.append(Particle(
-                proj.x + math.cos(angle) * random.randint(0, offset),
-                proj.y + math.sin(angle) * random.randint(0, offset),
-                Color.ORANGE, spd,
-                MissileConfig.EXPLOSION_PARTICLE_LIFETIME,
-                MissileConfig.EXPLOSION_PARTICLE_SIZE
-            ))
+        # 爆炸特效数据
+        results.append(DamageResult(None, 0, effects=[{
+            "type": "explosion",
+            "x": proj.x, "y": proj.y,
+            "radius": self.explosion_radius,
+        }]))
+        return results
 
     def get_display_stats(self):
         return [

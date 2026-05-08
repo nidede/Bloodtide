@@ -3,6 +3,7 @@
 """
 import pygame
 from core.config import Color, ScreenConfig, get_font, PlayerConfig
+from entities.weapons.base import UPGRADE_UNLIMITED
 
 
 class HUD:
@@ -287,6 +288,12 @@ class UpgradeScreen:
                 desc_surf = self.font_desc.render(line, True, Color.LIGHT_GRAY)
                 surface.blit(desc_surf, (cx + (self.card_width - desc_surf.get_width()) // 2, icon_y + 90 + j * 22))
 
+            # 选择计数（仅有限次数时显示，如 0/1）
+            if upg.max_count < UPGRADE_UNLIMITED:
+                count_text = f"{upg.current_count}/{upg.max_count}"
+                count_surf = self.font_desc.render(count_text, True, Color.LIGHT_GRAY)
+                surface.blit(count_surf, (cx + (self.card_width - count_surf.get_width()) // 2, y + self.card_height - 50))
+
             # 点击提示
             hint = self.font_desc.render("点击选择", True, Color.LIGHT_GRAY if is_hover else (100, 100, 120))
             surface.blit(hint, (cx + (self.card_width - hint.get_width()) // 2, y + self.card_height - 30))
@@ -300,19 +307,30 @@ class PauseScreen:
         self.font_btn = get_font(28)
         self.btn_width = 200
         self.btn_height = 60
-        self.btn_y = ScreenConfig.HEIGHT // 2 + 40
-        self.btn_x = ScreenConfig.WIDTH // 2 - self.btn_width // 2
+        self.btn_gap = 20
+        # 继续按钮
+        self.resume_y = ScreenConfig.HEIGHT // 2 + 20
+        self.resume_x = ScreenConfig.WIDTH // 2 - self.btn_width // 2
+        # 返回大厅按钮
+        self.menu_y = self.resume_y + self.btn_height + self.btn_gap
+        self.menu_x = ScreenConfig.WIDTH // 2 - self.btn_width // 2
 
     def get_resume_button_rect(self):
         """返回继续按钮区域"""
-        return pygame.Rect(self.btn_x, self.btn_y, self.btn_width, self.btn_height)
+        return pygame.Rect(self.resume_x, self.resume_y, self.btn_width, self.btn_height)
+
+    def get_menu_button_rect(self):
+        """返回大厅按钮区域"""
+        return pygame.Rect(self.menu_x, self.menu_y, self.btn_width, self.btn_height)
 
     def handle_event(self, event):
-        """处理点击事件"""
+        """处理点击事件，返回 'resume' / 'menu' / None"""
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self.get_resume_button_rect().collidepoint(event.pos):
-                return True
-        return False
+                return "resume"
+            if self.get_menu_button_rect().collidepoint(event.pos):
+                return "menu"
+        return None
 
     def draw(self, surface):
         """绘制暂停界面"""
@@ -325,14 +343,22 @@ class PauseScreen:
         title = self.font_title.render("暂停", True, Color.WHITE)
         surface.blit(title, title.get_rect(center=(ScreenConfig.WIDTH // 2, ScreenConfig.HEIGHT // 2 - 60)))
 
-        # 继续按钮
         mx, my = pygame.mouse.get_pos()
-        btn_rect = self.get_resume_button_rect()
-        is_hover = btn_rect.collidepoint(mx, my)
 
-        btn_bg = Color.CARD_BG_HOVER if is_hover else Color.DARK_GRAY
-        pygame.draw.rect(surface, btn_bg, btn_rect, border_radius=10)
-        pygame.draw.rect(surface, Color.GREEN, btn_rect, 2, border_radius=10)
+        # 继续按钮
+        resume_rect = self.get_resume_button_rect()
+        is_hover_resume = resume_rect.collidepoint(mx, my)
+        btn_bg = Color.CARD_BG_HOVER if is_hover_resume else Color.DARK_GRAY
+        pygame.draw.rect(surface, btn_bg, resume_rect, border_radius=10)
+        pygame.draw.rect(surface, Color.GREEN, resume_rect, 2, border_radius=10)
+        btn_text = self.font_btn.render("继续游戏", True, Color.WHITE if is_hover_resume else Color.LIGHT_GRAY)
+        surface.blit(btn_text, btn_text.get_rect(center=resume_rect.center))
 
-        btn_text = self.font_btn.render("继续游戏", True, Color.WHITE if is_hover else Color.LIGHT_GRAY)
-        surface.blit(btn_text, btn_text.get_rect(center=(self.btn_x + self.btn_width // 2, self.btn_y + self.btn_height // 2)))
+        # 返回大厅按钮
+        menu_rect = self.get_menu_button_rect()
+        is_hover_menu = menu_rect.collidepoint(mx, my)
+        btn_bg = Color.CARD_BG_HOVER if is_hover_menu else Color.DARK_GRAY
+        pygame.draw.rect(surface, btn_bg, menu_rect, border_radius=10)
+        pygame.draw.rect(surface, Color.RED, menu_rect, 2, border_radius=10)
+        btn_text = self.font_btn.render("返回大厅", True, Color.WHITE if is_hover_menu else Color.LIGHT_GRAY)
+        surface.blit(btn_text, btn_text.get_rect(center=menu_rect.center))

@@ -15,6 +15,7 @@
 import math
 from core.config import Color, WORLD_WIDTH, WORLD_HEIGHT, PlayerConfig
 from entities.combatants.base import CombatEntity
+from entities.weapons.base import UPGRADE_ONCE
 
 
 class Character(CombatEntity):
@@ -66,38 +67,45 @@ class Character(CombatEntity):
         self.dash_cooldown = 0
         self.dash_speed = 0.0
 
+        # 升级计数
+        self._upgrade_counts = {}
+
         # 注册效果
         self.add_effect(self.ON_DEAL_DAMAGE, self._lifesteal_effect)
 
     def gain_xp(self, amount):
-        """获得经验，升级时调用 on_level_up()"""
+        """获得经验，升级时调用 on_level_up()
+
+        Returns:
+            int: 本次升级的级数（0 表示未升级）
+        """
         self.xp += int(amount * self.xp_multiplier)
-        leveled = False
+        levels = 0
         while self.xp >= self.xp_to_next:
             self.xp -= self.xp_to_next
             self.level += 1
             self.xp_to_next = int(self.xp_to_next * 1.4)
             self.on_level_up()
-            leveled = True
-        return leveled
+            levels += 1
+        return levels
 
     def on_level_up(self):
         """升级奖励 - 子类重写定义自动增加的属性"""
         pass
 
-    def take_damage(self, damage, attacker=None):
-        """玩家受伤 - 带无敌帧和减伤"""
+    def _calc_actual_damage(self, damage):
+        """玩家受伤 - 无敌帧判断 + 减伤"""
         if self.invincible_timer > 0:
             return 0
-        actual = max(1, damage - self.defense)
-        self.hp -= actual
+        return max(1, damage - self.defense)
+
+    def _on_take_damage(self, actual, attacker):
+        """玩家受伤后 - 设置无敌帧"""
         self.invincible_timer = PlayerConfig.INVINCIBLE_FRAMES / 60
-        self._on_hit_by(attacker, actual)
-        return actual
 
     def _on_hit_by(self, attacker, damage):
         """玩家被击中后 - 子类重写（如 Soldier 的反伤）"""
-        pass
+        return []
 
     def _lifesteal_effect(self, target, damage, **kwargs):
         """吸血效果 - 造成伤害时回复生命"""
@@ -182,6 +190,8 @@ class Character(CombatEntity):
         self.has_dash = True
 
     # ========== 通用升级池 ==========
+    # 格式：(uid, name, desc, color, apply_fn, max_count)
+    # max_count: 可选次数上限，UPGRADE_UNLIMITED 表示无限
 
     GENERAL_UPGRADES = [
         ("speed",      "跑快点",   f"移动速度 +{UPG_SPEED}",              Color.CYAN,   lambda p, w: p._apply_speed(w)),
@@ -190,5 +200,5 @@ class Character(CombatEntity):
         ("life_steal", "吸血",     f"生命偷取 +{int(UPG_LIFE_STEAL*100)}%", Color.GREEN,  lambda p, w: p._apply_life_steal(w)),
         ("regen",      "生命恢复", f"每秒回复 +{UPG_REGEN}",              Color.GREEN,  lambda p, w: p._apply_regen(w)),
         ("xp",         "经验加成", f"经验获取 +{int(UPG_XP*100)}%",       Color.YELLOW, lambda p, w: p._apply_xp(w)),
-        ("dash",       "冲刺",     "解锁空格冲刺",                        Color.CYAN,   lambda p, w: p._apply_dash(w)),
+        ("dash",       "冲刺",     "解锁空格冲刺",                        Color.CYAN,   lambda p, w: p._apply_dash(w), UPGRADE_ONCE),
     ]

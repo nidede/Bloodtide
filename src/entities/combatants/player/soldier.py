@@ -4,7 +4,7 @@
 import math
 import pygame
 from core.config import Color, PlayerConfig, WORLD_WIDTH, WORLD_HEIGHT
-from ui.effects import pygame_draw_circle
+from core.render import pygame_draw_circle
 from .base import Character
 
 
@@ -20,9 +20,13 @@ class Soldier(Character):
         self.thorns = 0
 
     def _on_hit_by(self, attacker, damage):
-        """反伤 - 对攻击者造成 thorns 点伤害（特例：不走武器，不触发 ON_DEAL_DAMAGE）"""
+        """反伤 - 对攻击者造成 thorns 点伤害（不走武器，不触发 ON_DEAL_DAMAGE）"""
         if attacker and self.thorns > 0:
-            attacker.take_damage(self.thorns, attacker=self)
+            from entities.weapons.base import DamageResult
+            actual, _ = attacker.take_damage(self.thorns, attacker=self)
+            if actual > 0:
+                return [DamageResult(attacker, actual)]
+        return []
 
     def _apply_thorns(self, weapon):
         self.thorns += self.UPG_THORNS
@@ -31,6 +35,8 @@ class Soldier(Character):
     GENERAL_UPGRADES = Character.GENERAL_UPGRADES + [
         ("thorns", "反伤", f"敌人受伤 +{UPG_THORNS}", Color.ORANGE, lambda p, w: p._apply_thorns(w)),
     ]
+
+    # 注意：thorns 可叠加（每次 +5），不设上限
 
     def on_level_up(self):
         """士兵升级奖励：+10 最大生命，+1 防御"""
@@ -53,7 +59,7 @@ class Soldier(Character):
             dy *= 0.7071
         return dx, dy
 
-    def update(self, keys, monsters, particles, dt):
+    def update(self, keys, monsters, dt):
         dx, dy = self.handle_input(keys)
         total_speed = self.speed + self.dash_speed
         self.x += dx * total_speed * dt

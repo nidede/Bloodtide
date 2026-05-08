@@ -148,7 +148,7 @@ class PlayerConfig:
 # ============ 怪物参数 ============
 class MonsterConfig:
     ATTACK_COOLDOWN = 0.67  # 秒（原40帧/60）
-    FLASH_FRAMES = 0.1  # 秒（原6帧/60）
+    FLASH_DURATION = 0.1  # 秒（受击闪白持续时间）
 
 
 # ============ 波次参数 ============

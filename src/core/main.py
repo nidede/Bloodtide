@@ -101,7 +101,8 @@ class Game:
         self.screen_shake = 0  # 震屏剩余时间（秒）
         self.screen_shake_intensity = 0  # 震屏强度（像素）
         self.game_time = 0
-        self.combat = CombatSystem()
+        self.combat = CombatSystem(Particle, FloatingText)
+        self.pending_level_ups = 0  # 待选升级次数
 
     def _start_game(self):
         self._reset()
@@ -128,10 +129,8 @@ class Game:
         if self.screen_shake > 0:
             self.screen_shake = max(0, self.screen_shake - dt)
 
-        self.player.update(self.pressed, self.monsters, self.particles, dt)
+        self.player.update(self.pressed, self.monsters, dt)
 
-        if self.player.weapon:
-            self.player.weapon.update(self.player, self.monsters, self.particles, self.floating_texts, dt)
         if self.pressed[pygame.K_SPACE]:
             if self.player.try_dash():
                 for _ in range(15):
@@ -154,7 +153,7 @@ class Game:
                 ScreenConfig.WIDTH // 2, ScreenConfig.HEIGHT // 2,
                 f"第 {self.spawner.wave} 波!", Color.GOLD, 36, 1.5))
 
-        damage_taken, leveled_players = self.combat.update(
+        damage_taken, total_levels = self.combat.update(
             self.monsters, self.player, self.projectiles,
             self.particles, self.floating_texts, dt, self._is_visible)
 
@@ -164,7 +163,11 @@ class Game:
             for _ in range(8):
                 self.particles.append(Particle(self.player.x, self.player.y, Color.RED, speed=180, lifetime=0.33))
 
-        if self.player in leveled_players:
+        if total_levels > 0:
+            self.pending_level_ups += total_levels
+
+        if self.pending_level_ups > 0 and self.state == "playing":
+            self.pending_level_ups -= 1
             self.state = "upgrade"
             upgrades = roll_upgrades(self.player, self.player.weapon, 3)
             self.upgrade_screen = UpgradeScreen(upgrades)
@@ -316,8 +319,9 @@ class Game:
                 self.screen = _toggle_fullscreen(self.screen)
             elif event.key == pygame.K_ESCAPE:
                 if self.state == "upgrade":
-                    self.state = "playing"
+                    self.pending_level_ups = 0
                     self.upgrade_screen = None
+                    self.state = "playing"
                 elif self.state == "playing":
                     self.paused = not self.paused
                     if not self.paused:
@@ -351,13 +355,25 @@ class Game:
                     selected = self.upgrade_screen.selected
                     if selected:
                         selected.apply(self.player, self.player.weapon)
-                    self.state = "playing"
-                    self.upgrade_screen = None
+                    if self.pending_level_ups > 0:
+                        self.pending_level_ups -= 1
+                        upgrades = roll_upgrades(self.player, self.player.weapon, 3)
+                        self.upgrade_screen = UpgradeScreen(upgrades)
+                    else:
+                        self.state = "playing"
+                        self.upgrade_screen = None
             elif self.state in ("playing",) and self.paused:
-                if self.pause_screen and self.pause_screen.handle_event(event):
-                    self.paused = False
-                    self.pause_screen = None
-                    return
+                if self.pause_screen:
+                    result = self.pause_screen.handle_event(event)
+                    if result == "resume":
+                        self.paused = False
+                        self.pause_screen = None
+                        return
+                    elif result == "menu":
+                        self.paused = False
+                        self.pause_screen = None
+                        self.state = "menu"
+                        return
             elif self.state == "playing" and not self.paused:
                 if self.hud.get_pause_button_rect().collidepoint(event.pos):
                     self.paused = True

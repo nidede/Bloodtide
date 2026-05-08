@@ -2,9 +2,11 @@
 步枪 - 基础枪械，速射型
 """
 import random
-from ..base import Weapon, Upgrade
+from ..base import Weapon, Upgrade, DamageResult, UPGRADE_ONCE
 from entities.projectiles import Projectile
 from core.config import Color
+
+_UPG_CRIT_MAX = 5  # 精准暴击最多选5次
 
 
 class Rifle(Weapon):
@@ -29,7 +31,7 @@ class Rifle(Weapon):
                 lambda p, w: setattr(w, 'fire_rate', max(3, w.fire_rate - 1))),
         Upgrade("rifle_burst", "三连发", "弹幕 +2 散射略增", Color.YELLOW,
                 lambda p, w: (setattr(w, 'projectile_count', w.projectile_count + 2),
-                              setattr(w, 'spread', w.spread + 0.05))),
+                              setattr(w, 'spread', w.spread + 0.05)), UPGRADE_ONCE),
         Upgrade("rifle_sniper", "狙击", "伤害+5 射速降低", Color.RED,
                 lambda p, w: (setattr(w, 'damage', w.damage + 5),
                               setattr(w, 'fire_rate', min(15, w.fire_rate + 3)),
@@ -37,7 +39,7 @@ class Rifle(Weapon):
         Upgrade("rifle_piercing", "穿透弹", "子弹穿透 +1", Color.PURPLE,
                 lambda p, w: setattr(w, 'piercing', w.piercing + 1)),
         Upgrade("rifle_crit", "精准暴击", "暴击率 +10%", Color.GOLD,
-                lambda p, w: setattr(w, 'crit_chance', min(0.8, w.crit_chance + 0.10))),
+                lambda p, w: setattr(w, 'crit_chance', min(0.8, w.crit_chance + 0.10)), _UPG_CRIT_MAX),
         Upgrade("rifle_critd", "穿甲弹", "暴击伤害 +50%", Color.GOLD,
                 lambda p, w: setattr(w, 'crit_damage', w.crit_damage + 0.50)),
     ]
@@ -56,15 +58,12 @@ class Rifle(Weapon):
             projectiles.append(p)
         return projectiles
 
-    def deal_damage(self, target, targets, attacker, proj, particles, floating_texts):
+    def _deal_damage(self, target, targets, attacker, proj):
         """步枪伤害：暴击"""
         is_crit = random.random() < self.crit_chance
         damage = int(self.damage * (self.crit_damage if is_crit else 1))
-        actual = target.take_damage(damage, attacker=attacker)
-        self._create_damage_text(target, actual, is_crit, floating_texts)
-        if attacker and hasattr(attacker, 'trigger'):
-            attacker.trigger(attacker.ON_DEAL_DAMAGE, target=target, damage=actual)
-        return actual, is_crit
+        actual, reaction = target.take_damage(damage, attacker=attacker)
+        return [DamageResult(target, actual, is_crit=is_crit)] + reaction
 
     def get_display_stats(self):
         """步枪显示伤害、攻速、暴击、暴伤"""

@@ -32,7 +32,6 @@ class RangedMonster(BaseMonster):
 
     def __init__(self, level, x, y):
         super().__init__(level, x, y)
-        self.weapon.fire_rate = int(self.ATTACK_COOLDOWN * 60)
 
     def update(self, player, dt):
         """远程怪物 AI - 保持最佳射击距离"""
@@ -58,19 +57,18 @@ class RangedMonster(BaseMonster):
         self.attack_cooldown = max(0, self.attack_cooldown - dt)
         self.flash_timer = max(0, self.flash_timer - dt)
 
-    def attack(self, targets, particles, floating_texts, dt):
+    def attack(self, targets, dt):
         """通过武器发射子弹，返回 Projectile 列表"""
         if not self.can_attack() or not targets:
-            return []
+            return [], []
 
         # 瞄准最近的目标
         target = min(targets, key=lambda t: math.hypot(t.x - self.x, t.y - self.y))
         self.angle = math.atan2(target.y - self.y, target.x - self.x)
         self.attack_cooldown = self.ATTACK_COOLDOWN
 
-        # 同步怪物伤害到武器（确保动态伤害生效）
-        self.weapon.damage = self.damage
-        return self.weapon.attack(self, targets, dt)
+        projs = self.weapon.attack(self, targets, dt)
+        return projs, []
     
     def _draw_shape(self, surface, color, sx, sy):
         """菱形 + 眼睛表示远程"""

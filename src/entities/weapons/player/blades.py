@@ -3,9 +3,10 @@
 """
 import math
 import pygame
-from ..base import Weapon, Upgrade
-from core.config import Color, MonsterConfig
-from ui.effects import Particle, FloatingText
+from ..base import Weapon, Upgrade, DamageResult
+from core.config import Color
+
+_UPG_SPEED_MAX = 5  # 极速旋转最多选5次
 
 
 class Blades(Weapon):
@@ -13,11 +14,11 @@ class Blades(Weapon):
     desc = "环绕 | 持续切割"
     color = Color.CYAN
     blade_count = 4
-    rotation_speed = 3.6
-    orbit_radius = 40
-    damage = 12
+    rotation_speed = 4.2
+    orbit_radius = 30
+    damage = 15
     blade_size = 10
-    blade_length = 30
+    blade_length = 45
 
     # 武器升级颜色标准：伤害-RED | 数量-YELLOW | 范围/速度-CYAN
     upgrades = [
@@ -27,12 +28,9 @@ class Blades(Weapon):
                               w.total_rotations.append(0.0),
                               setattr(w, 'cooldowns', dict({**w.cooldowns, w.blade_count - 1: {}})))),
         Upgrade("blade_speed", "极速旋转", "旋转速度大幅提升", Color.CYAN,
-                lambda p, w: setattr(w, 'rotation_speed', w.rotation_speed + 2.0)),
+                lambda p, w: setattr(w, 'rotation_speed', w.rotation_speed + 2.0), _UPG_SPEED_MAX),
         Upgrade("blade_damage", "锋刃", "飞刀伤害 +3", Color.RED,
                 lambda p, w: setattr(w, 'damage', w.damage + 3)),
-        Upgrade("blade_range", "扩展范围", "飞刀旋转半径 +20, 伤害 +1", Color.CYAN,
-                lambda p, w: (setattr(w, 'orbit_radius', w.orbit_radius + 20),
-                              setattr(w, 'damage', w.damage + 1))),
         Upgrade("blade_length", "加长刀刃", "飞刀长度 +12", Color.CYAN,
                 lambda p, w: setattr(w, 'blade_length', w.blade_length + 12)),
     ]
@@ -49,14 +47,13 @@ class Blades(Weapon):
         """飞刀不需要发射投射物"""
         return []
 
-    def deal_damage(self, target, targets, attacker, proj, particles, floating_texts):
+    def _deal_damage(self, target, targets, attacker, proj):
         """飞刀伤害 - 无暴击，直接扣血"""
-        actual = target.take_damage(self.damage, attacker=attacker)
-        self._create_damage_text(target, actual, False, floating_texts)
-        if attacker and hasattr(attacker, 'trigger'):
-            attacker.trigger(attacker.ON_DEAL_DAMAGE, target=target, damage=actual)
+        actual, reaction = target.take_damage(self.damage, attacker=attacker)
+        return [DamageResult(target, actual)] + reaction
 
-    def update(self, attacker, targets, particles, floating_texts, dt):
+    def update(self, attacker, targets, dt):
+        results = []
         for i in range(len(self.angles)):
             self.angles[i] = (self.angles[i] + self.rotation_speed * dt) % (2 * math.pi)
             self.total_rotations[i] += self.rotation_speed * dt
@@ -88,10 +85,17 @@ class Blades(Weapon):
                 mr = target.size
                 dist = self._point_to_segment_dist(mx, my, sx, sy, ex, ey)
                 if dist < mr + self.blade_size:
-                    self.deal_damage(target, targets, attacker, None, particles, floating_texts)
+                    hit_results = self.deal_damage(target, targets, attacker, None)
+                    results.extend(hit_results)
                     self.cooldowns[i][mid] = self.total_rotations[i]
                     hit_x, hit_y = self._closest_point_on_segment(mx, my, sx, sy, ex, ey)
-                    particles.append(Particle(hit_x, hit_y, Color.CYAN, speed=120, lifetime=0.17))
+                    # 飞刀命中特效数据
+                    if hit_results:
+                        hit_results[0].effects.append(
+                            {"type": "particle", "x": hit_x, "y": hit_y,
+                             "color": Color.CYAN, "speed": 120, "lifetime": 0.17}
+                        )
+        return results
 
     def _point_to_segment_dist(self, px, py, x1, y1, x2, y2):
         dx = x2 - x1

@@ -5,21 +5,45 @@
 - deal_damage(target, targets, attacker, ...) 中 target 为首要命中目标
 - 远程武器：CombatSystem 碰撞检测后调用 weapon.deal_damage()
 - 近战武器：武器自己的 update() 中调用 deal_damage()
+
+武器不直接创建 UI 对象（粒子/浮动文字），而是返回 DamageResult 数据，
+由 CombatSystem 统一处理视觉特效。
 """
-import random
+
+
+class DamageResult:
+    """武器伤害结果 - 纯数据，不含 UI 逻辑
+
+    CombatSystem 根据此数据创建浮动文字和粒子特效。
+    effects 字典列表描述武器专属特效（如爆炸、飞刀命中光效）。
+    """
+    __slots__ = ('target', 'damage', 'is_crit', 'effects')
+
+    def __init__(self, target, damage, is_crit=False, effects=None):
+        self.target = target
+        self.damage = damage
+        self.is_crit = is_crit
+        self.effects = effects or []  # list of dict: {"type": "explosion"|"particle", ...}
+
+
+UPGRADE_ONCE = 1      # 只能选一次的升级
+UPGRADE_UNLIMITED = 1000  # 可无限选择的升级（默认）
 
 
 class Upgrade:
-    def __init__(self, uid, name, desc, icon_color, apply_fn):
+    def __init__(self, uid, name, desc, icon_color, apply_fn, max_count=UPGRADE_UNLIMITED, current_count=0):
         self.id = uid
         self.name = name
         self.desc = desc
         self.icon_color = icon_color
         self.apply_fn = apply_fn
+        self.max_count = max_count
+        self.current_count = current_count
 
     def apply(self, player, weapon):
         if self.apply_fn:
             self.apply_fn(player, weapon)
+        player._upgrade_counts[self.id] = player._upgrade_counts.get(self.id, 0) + 1
 
 
 class Weapon:
@@ -39,7 +63,6 @@ class Weapon:
     damage = 10
     fire_rate = 25
     upgrades = []
-    handles_own_particles = False  # 子类设 True 表示 deal_damage 自行处理命中特效
 
     def attack(self, attacker, targets, dt=None):
         """执行攻击 - 远程返回投射物列表，近战返回空列表
@@ -51,49 +74,50 @@ class Weapon:
         """
         return []
 
-    def deal_damage(self, target, targets, attacker, proj, particles, floating_texts):
-        """命中事件 - 子类重写定义伤害逻辑（可多次触发，如穿透）
+    def deal_damage(self, target, targets, attacker, proj):
+        """命中事件 - 模板方法：子类重写 _deal_damage 定义伤害逻辑
+
+        基类统一处理 ON_DEAL_DAMAGE 触发和 DamageResult 组装。
+        子类只需在 _deal_damage 中计算伤害并返回结果列表。
 
         Args:
             target: 首要命中目标 (CombatEntity)
             targets: 对方全体列表 (List[CombatEntity])，AoE 遍历用
             attacker: 攻击方 (CombatEntity)，效果触发需要
             proj: 投射物实例（爆炸等需要位置信息）
-            particles: 粒子列表
-            floating_texts: 浮动文字列表
+
+        Returns:
+            list[DamageResult]: 伤害结果列表，由 CombatSystem 处理视觉特效
         """
-        actual = target.take_damage(self.damage, attacker=attacker)
-        self._create_damage_text(target, actual, False, floating_texts)
-        # 触发攻击者的效果（吸血等）
+        results = self._deal_damage(target, targets, attacker, proj)
+        # 统一触发攻击者效果（吸血等）
         if attacker and hasattr(attacker, 'trigger'):
-            attacker.trigger(attacker.ON_DEAL_DAMAGE, target=target, damage=actual)
+            for r in results:
+                if r.target is not None and r.damage > 0:
+                    attacker.trigger(attacker.ON_DEAL_DAMAGE, target=r.target, damage=r.damage)
+        return results
 
-    def _create_damage_text(self, target, damage, is_crit, floating_texts):
-        """创建伤害浮动文字 - 武器决定浮动文字的样式"""
-        if floating_texts is None or damage <= 0:
-            return
-        from core.config import Color
-        from ui.effects import FloatingText
-        color = Color.GOLD if is_crit else Color.WHITE
-        size = 28 if is_crit else 20
-        text = f"{damage}!" if is_crit else str(damage)
-        floating_texts.append(FloatingText(
-            target.x + random.randint(-10, 10),
-            target.y - target.size - 5,
-            text, color, size
-        ))
+    def _deal_damage(self, target, targets, attacker, proj):
+        """计算伤害并返回 DamageResult 列表 - 子类重写
 
-    def update(self, attacker, targets, particles, floating_texts, dt):
+        默认实现：对 target 造成 self.damage 点伤害。
+        子类重写时可实现暴击、AoE 等特殊逻辑，但不需要触发 ON_DEAL_DAMAGE。
+        """
+        actual, reaction = target.take_damage(self.damage, attacker=attacker)
+        return [DamageResult(target, actual)] + reaction
+
+    def update(self, attacker, targets, dt):
         """持续效果（如飞刀旋转）
 
         Args:
             attacker: 攻击方实体
             targets: 对方阵营实体列表
-            particles: 粒子列表
-            floating_texts: 浮动文字列表
             dt: 帧间隔
+
+        Returns:
+            list[DamageResult]: 命中结果列表，由 CombatSystem 处理视觉特效
         """
-        pass
+        return []
 
     def draw(self, surface, cam_x=0, cam_y=0, px=0, py=0):
         """绘制武器效果"""

@@ -3,13 +3,8 @@
 """
 import math
 import random
-import pygame
 from core.config import Color, get_font, ParticleConfig
-
-
-def pygame_draw_circle(surface, color, x, y, radius):
-    """安全绘制圆形，确保参数合法"""
-    pygame.draw.circle(surface, color, (int(x), int(y)), max(1, int(radius)))
+from core.render import pygame_draw_circle
 
 
 class Particle:
