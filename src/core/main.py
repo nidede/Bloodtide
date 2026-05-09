@@ -106,7 +106,7 @@ class Game:
 
     def _start_game(self):
         self._reset()
-        weapon_classes = get_random_weapons(3)
+        weapon_classes = get_random_weapons()
         self.weapon_select_screen = WeaponSelectScreen(weapon_classes)
         self.state = "weapon_select"
 
@@ -384,6 +384,20 @@ class Game:
                     self._start_game()
                 elif result == "menu":
                     self.state = "menu"
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            if self.state == "weapon_select" and self.weapon_select_screen:
+                if self.weapon_select_screen.handle_event(event):
+                    chosen_cls = self.weapon_select_screen.selected
+                    if chosen_cls:
+                        self.player.weapon = chosen_cls()
+                        self.weapon_select_screen = None
+                        self.state = "playing"
+        elif event.type == pygame.MOUSEMOTION:
+            if self.state == "weapon_select" and self.weapon_select_screen:
+                self.weapon_select_screen.handle_event(event)
+        elif event.type == pygame.MOUSEWHEEL:
+            if self.state == "weapon_select" and self.weapon_select_screen:
+                self.weapon_select_screen.handle_event(event)
 
     def run(self):
         pygame.key.set_repeat(200, 50)

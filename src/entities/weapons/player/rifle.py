@@ -7,14 +7,15 @@ from entities.projectiles import Projectile
 from core.config import Color
 
 _UPG_CRIT_MAX = 5  # 精准暴击最多选5次
+_UPG_RAPID_MAX = 5  # 射速最多选5次
 
 
 class Rifle(Weapon):
     name = "步枪"
     desc = "速射 | 基础枪械"
     color = Color.BLUE
-    damage = 10
-    fire_rate = 12
+    damage = 12
+    fire_rate = 15
     # 步枪专属属性
     projectile_count = 1
     projectile_speed = 10
@@ -22,13 +23,14 @@ class Rifle(Weapon):
     piercing = 0
     crit_chance = 0.05
     crit_damage = 1.5
+    is_ranged = True
 
     # 武器升级颜色标准：伤害-RED | 射速-BLUE | 弹幕-YELLOW | 穿透-PURPLE | 暴击-GOLD
     upgrades = [
         Upgrade("rifle_damage", "强化枪管", "步枪伤害 +3", Color.RED,
                 lambda p, w: setattr(w, 'damage', w.damage + 3)),
-        Upgrade("rifle_rapid", "轻量化", "步枪射速提升", Color.BLUE,
-                lambda p, w: setattr(w, 'fire_rate', max(3, w.fire_rate - 1))),
+        Upgrade("rifle_rapid", "轻量化", "步枪攻速 +1/s", Color.BLUE,
+                lambda p, w: setattr(w, 'fire_rate', max(3.0, 60 / (60 / w.fire_rate + 1))), _UPG_RAPID_MAX),
         Upgrade("rifle_burst", "三连发", "弹幕 +2 散射略增", Color.YELLOW,
                 lambda p, w: (setattr(w, 'projectile_count', w.projectile_count + 2),
                               setattr(w, 'spread', w.spread + 0.05)), UPGRADE_ONCE),

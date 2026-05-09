@@ -3,7 +3,7 @@
 """
 import math
 import pygame
-from ..base import Weapon, Upgrade, DamageResult
+from ..base import Weapon, Upgrade, DamageResult, EffectType
 from core.config import Color
 
 _UPG_SPEED_MAX = 5  # 极速旋转最多选5次
@@ -92,7 +92,7 @@ class Blades(Weapon):
                     # 飞刀命中特效数据
                     if hit_results:
                         hit_results[0].effects.append(
-                            {"type": "particle", "x": hit_x, "y": hit_y,
+                            {"type": EffectType.PARTICLE, "x": hit_x, "y": hit_y,
                              "color": Color.CYAN, "speed": 120, "lifetime": 0.17}
                         )
         return results

@@ -136,7 +136,7 @@ class HUD:
 
 
 class WeaponSelectScreen:
-    """武器选择界面"""
+    """武器选择界面 - 自适应网格布局，支持滚动"""
 
     def __init__(self, weapons):
         self.weapons = weapons
@@ -144,26 +144,73 @@ class WeaponSelectScreen:
         self.font_title = get_font(36)
         self.font_name = get_font(28)
         self.font_desc = get_font(16)
-        self.card_w = 220
+        self.card_w = 200
         self.card_h = 240
-        self.padding = 50
+        self.padding_x = 30
+        self.padding_y = 30
+        # 计算每行最多放几个卡片
+        max_usable_w = ScreenConfig.WIDTH - 80  # 左右各留40边距
+        self.cols = max(1, (max_usable_w + self.padding_x) // (self.card_w + self.padding_x))
+        # 网格总尺寸
+        self.rows = (len(weapons) + self.cols - 1) // self.cols
+        grid_w = self.cols * self.card_w + (self.cols - 1) * self.padding_x
+        self.grid_w = grid_w
+        self.grid_start_x = (ScreenConfig.WIDTH - grid_w) // 2
+        self.grid_start_y_base = 200  # 标题下方的起始 y
+        # 可视区域
+        self.view_top = 0
+        self.view_h = ScreenConfig.HEIGHT - self.grid_start_y_base - 40  # 底部留40
+        # 内容总高度
+        self.content_h = self.rows * self.card_h + (self.rows - 1) * self.padding_y
+        # 滚动条
+        self.scrollbar_w = 8
+        # 拖拽滑动状态
+        self._dragging = False
+        self._drag_start_y = 0
+        self._drag_scroll_start = 0
 
-    def _layout(self):
-        """计算卡片布局"""
-        total_w = self.card_w * len(self.weapons) + self.padding * (len(self.weapons) - 1)
-        start_x = (ScreenConfig.WIDTH - total_w) // 2
-        y = (ScreenConfig.HEIGHT - self.card_h) // 2 - 30
-        return start_x, y
+    def _max_scroll(self):
+        return max(0, self.content_h - self.view_h)
+
+    def _card_pos(self, i):
+        """计算第i个卡片的 (x, y)"""
+        col = i % self.cols
+        row = i // self.cols
+        cx = self.grid_start_x + col * (self.card_w + self.padding_x)
+        cy = self.grid_start_y_base + row * (self.card_h + self.padding_y) - self.view_top
+        return cx, cy
 
     def handle_event(self, event):
-        if event.type == pygame.MOUSEBUTTONDOWN:
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mx, my = event.pos
-            start_x, y = self._layout()
-            for i, weapon_cls in enumerate(self.weapons):
-                cx = start_x + i * (self.card_w + self.padding)
-                if cx <= mx <= cx + self.card_w and y <= my <= y + self.card_h:
-                    self.selected = weapon_cls
-                    return True
+            # 记录拖拽起点
+            if self.grid_start_y_base <= my <= self.grid_start_y_base + self.view_h:
+                self._dragging = True
+                self._drag_start_y = my
+                self._drag_scroll_start = self.view_top
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            if self._dragging:
+                # 拖拽距离很小视为点击
+                mx, my = event.pos
+                drag_dist = abs(my - self._drag_start_y)
+                self._dragging = False
+                if drag_dist < 10:
+                    # 当作点击选择卡片
+                    for i, weapon_cls in enumerate(self.weapons):
+                        cx, cy = self._card_pos(i)
+                        if (cx <= mx <= cx + self.card_w and
+                            self.grid_start_y_base <= my <= self.grid_start_y_base + self.view_h and
+                            cy <= my <= cy + self.card_h):
+                            self.selected = weapon_cls
+                            return True
+        elif event.type == pygame.MOUSEMOTION:
+            if self._dragging:
+                _, my = event.pos
+                delta = self._drag_start_y - my
+                self.view_top = max(0, min(self._max_scroll(), self._drag_scroll_start + delta))
+        elif event.type == pygame.MOUSEWHEEL:
+            self.view_top -= event.y * 40
+            self.view_top = max(0, min(self._max_scroll(), self.view_top))
         return False
 
     def draw(self, surface):
@@ -172,18 +219,26 @@ class WeaponSelectScreen:
         title = self.font_title.render("选择武器", True, Color.WHITE)
         surface.blit(title, ((ScreenConfig.WIDTH - title.get_width()) // 2, 120))
 
-        subtitle = self.font_desc.render("选择一件武器开始游戏", True, Color.LIGHT_GRAY)
+        subtitle = self.font_desc.render("选择一件武器开始游戏（拖拽或滚轮滑动）", True, Color.LIGHT_GRAY)
         surface.blit(subtitle, ((ScreenConfig.WIDTH - subtitle.get_width()) // 2, 170))
 
-        start_x, y = self._layout()
-        
+        # 裁剪可视区域
+        clip_rect = pygame.Rect(0, self.grid_start_y_base,
+                                ScreenConfig.WIDTH, self.view_h)
+        surface.set_clip(clip_rect)
+
         mx, my = pygame.mouse.get_pos()
         for i, weapon_cls in enumerate(self.weapons):
-            cx = start_x + i * (self.card_w + self.padding)
-            is_hover = cx <= mx <= cx + self.card_w and y <= my <= y + self.card_h
-            
+            cx, cy = self._card_pos(i)
+            # 跳过不在可视区域的卡片
+            if cy + self.card_h < self.grid_start_y_base or cy > self.grid_start_y_base + self.view_h:
+                continue
+            is_hover = (cx <= mx <= cx + self.card_w and
+                       self.grid_start_y_base <= my <= self.grid_start_y_base + self.view_h and
+                       cy <= my <= cy + self.card_h)
+
             # 卡片背景
-            card_rect = pygame.Rect(cx, y, self.card_w, self.card_h)
+            card_rect = pygame.Rect(cx, cy, self.card_w, self.card_h)
             if is_hover:
                 pygame.draw.rect(surface, Color.CARD_BG_HOVER, card_rect, border_radius=15)
                 pygame.draw.rect(surface, weapon_cls.color, card_rect, 3, border_radius=15)
@@ -192,28 +247,47 @@ class WeaponSelectScreen:
                 pygame.draw.rect(surface, weapon_cls.color, card_rect, 2, border_radius=15)
 
             # 顶部装饰条
-            pygame.draw.rect(surface, weapon_cls.color, (cx + 20, y + 20, self.card_w - 40, 6), border_radius=3)
-            
+            pygame.draw.rect(surface, weapon_cls.color, (cx + 20, cy + 20, self.card_w - 40, 6), border_radius=3)
+
             # 武器图标
             icon_x = cx + self.card_w // 2
-            icon_y = y + 80
+            icon_y = cy + 80
             pygame.draw.circle(surface, weapon_cls.color, (icon_x, icon_y), 40)
             pygame.draw.circle(surface, Color.BG_COLOR, (icon_x, icon_y), 32)
             pygame.draw.circle(surface, weapon_cls.color, (icon_x, icon_y), 28)
-            
+
             # 武器名称
             name = self.font_name.render(weapon_cls.name, True, Color.WHITE)
             surface.blit(name, (cx + (self.card_w - name.get_width()) // 2, icon_y + 55))
-            
+
             # 武器描述
             desc_lines = weapon_cls.desc.split('|')
             for j, line in enumerate(desc_lines):
                 desc = self.font_desc.render(line.strip(), True, Color.LIGHT_GRAY)
                 surface.blit(desc, (cx + (self.card_w - desc.get_width()) // 2, icon_y + 90 + j * 20))
-            
+
             # 点击提示
             hint = self.font_desc.render("点击选择", True, Color.LIGHT_GRAY if is_hover else (100, 100, 120))
-            surface.blit(hint, (cx + (self.card_w - hint.get_width()) // 2, y + self.card_h - 30))
+            surface.blit(hint, (cx + (self.card_w - hint.get_width()) // 2, cy + self.card_h - 30))
+
+        # 取消裁剪
+        surface.set_clip(None)
+
+        # 滚动条
+        if self.content_h > self.view_h:
+            sb_x = self.grid_start_x + self.grid_w + 15
+            sb_track_h = self.view_h
+            # 滚动条轨道
+            pygame.draw.rect(surface, (60, 60, 70),
+                           (sb_x, self.grid_start_y_base, self.scrollbar_w, sb_track_h),
+                           border_radius=4)
+            # 滚动条滑块
+            ratio = self.view_h / self.content_h
+            thumb_h = max(30, int(sb_track_h * ratio))
+            thumb_y = self.grid_start_y_base + int((self.view_top / self._max_scroll()) * (sb_track_h - thumb_h))
+            pygame.draw.rect(surface, (150, 150, 170),
+                           (sb_x, thumb_y, self.scrollbar_w, thumb_h),
+                           border_radius=4)
 
 
 class UpgradeScreen:

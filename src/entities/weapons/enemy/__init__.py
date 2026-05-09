@@ -3,5 +3,6 @@
 """
 from .melee import EnemyMeleeWeapon
 from .rifle import EnemyRifle
+from .homing import BossHomingRifle
 
-__all__ = ['EnemyMeleeWeapon', 'EnemyRifle']
+__all__ = ['EnemyMeleeWeapon', 'EnemyRifle', 'BossHomingRifle']

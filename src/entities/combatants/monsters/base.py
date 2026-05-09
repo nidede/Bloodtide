@@ -98,13 +98,20 @@ class BaseMonster(CombatEntity):
     
     def update(self, player, dt):
         """更新怪物状态 - 近战怪物默认追击玩家，远程怪物重写此方法"""
+        self.update_status(dt)
+
+        if self.is_movement_blocked():
+            self.flash_timer = max(0, self.flash_timer - dt)
+            return
+
         dx = player.x - self.x
         dy = player.y - self.y
         dist = math.hypot(dx, dy)
         if dist > 0:
-            self.x += (dx / dist) * self.speed * dt
-            self.y += (dy / dist) * self.speed * dt
-        self.attack_cooldown = max(0, self.attack_cooldown - dt)
+            speed = self.speed * self.get_speed_multiplier()
+            self.x += (dx / dist) * speed * dt
+            self.y += (dy / dist) * speed * dt
+        self.attack_cooldown = max(0, self.attack_cooldown - dt * self.get_attack_speed_multiplier())
         self.flash_timer = max(0, self.flash_timer - dt)
 
     def can_attack(self):
@@ -112,16 +119,18 @@ class BaseMonster(CombatEntity):
         return self.attack_cooldown <= 0
 
     def attack(self, targets, dt):
-        """攻击目标 - 近战怪物默认实现碰撞伤害（委托武器），远程怪物重写返回 Projectile[]
+        """攻击目标 - 近战碰撞伤害，远程怪物重写返回 Projectile 列表
 
         Args:
             targets: 目标列表
             dt: 帧间隔时间
 
         Returns:
-            list: 远程怪物返回 Projectile 列表，近战怪物返回空列表
-            list[DamageResult]: 近战伤害结果（由 CombatSystem 处理特效）
+            (projectiles, damage_results): 投射物列表, 伤害结果列表
         """
+        if self.is_attack_blocked():
+            return [], []
+
         results = []
         for target in targets:
             if self.collides_with(target) and self.can_attack():
@@ -135,16 +144,22 @@ class BaseMonster(CombatEntity):
         return dist < self.size + target.size
     
     def draw(self, surface, cam_x=0, cam_y=0):
-        """绘制怪物 - 通用框架：闪白 + 坐标转换 + 形状 + 血条"""
+        """绘制怪物 - 通用框架：闪白 + 坐标转换 + 形状 + 血条 + 状态"""
         color = Color.WHITE if self.flash_timer > 0 else self.color
         sx, sy = int(self.x - cam_x), int(self.y - cam_y)
         self._draw_shape(surface, color, sx, sy)
         self._draw_health_bar(surface, sx, sy)
+        self._draw_status(surface, sx, sy)
 
     def _draw_shape(self, surface, color, sx, sy):
         """绘制怪物形状 - 子类重写此方法实现不同外观，默认圆形"""
         pygame.draw.circle(surface, color, (sx, sy), self.size)
         pygame.draw.circle(surface, Color.WHITE, (sx, sy), self.size, 1)
+
+    def _draw_status(self, surface, sx, sy):
+        """绘制状态效果图标 - 委托给效果对象自己画"""
+        for eff in self.status_effects:
+            eff.draw(surface, sx, sy, self.size)
     
     @classmethod
     def get_spawn_info(cls):
