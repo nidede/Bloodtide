@@ -61,7 +61,7 @@ class Soldier(Character):
 
     def update(self, keys, monsters, dt):
         dx, dy = self.handle_input(keys)
-        total_speed = self.speed + self.dash_speed
+        total_speed = (self.speed + self.dash_speed) * self.get_speed_multiplier()
         self.x += dx * total_speed * dt
         self.y += dy * total_speed * dt
 
@@ -105,3 +105,6 @@ class Soldier(Character):
         pygame.draw.line(surface, Color.YELLOW,
                          (int(sx), int(sy)),
                          (int(end_x), int(end_y)), 3)
+        # 绘制状态效果
+        for eff in self.status_effects:
+            eff.draw(surface, int(sx), int(sy), self.size)

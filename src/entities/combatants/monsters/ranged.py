@@ -35,6 +35,12 @@ class RangedMonster(BaseMonster):
 
     def update(self, player, dt):
         """远程怪物 AI - 保持最佳射击距离"""
+        self.update_status(dt)
+
+        if self.is_movement_blocked():
+            self.flash_timer = max(0, self.flash_timer - dt)
+            return
+
         dx = player.x - self.x
         dy = player.y - self.y
         dist = math.hypot(dx, dy)
@@ -46,19 +52,24 @@ class RangedMonster(BaseMonster):
                 self.x -= nx * self.speed * CombatConfig.RETREAT_SPEED_RATIO * dt
                 self.y -= ny * self.speed * CombatConfig.RETREAT_SPEED_RATIO * dt
             elif dist < self.OPTIMAL_RANGE:
-                # 最佳范围内，缓慢靠近
-                self.x += nx * self.speed * 0.3 * dt
-                self.y += ny * self.speed * 0.3 * dt
+            # 最佳范围内，缓慢靠近
+                speed = self.speed * self.get_speed_multiplier()
+                self.x += nx * speed * 0.3 * dt
+                self.y += ny * speed * 0.3 * dt
             else:
                 # 太远了，正常靠近
-                self.x += nx * self.speed * dt
-                self.y += ny * self.speed * dt
+                speed = self.speed * self.get_speed_multiplier()
+                self.x += nx * speed * dt
+                self.y += ny * speed * dt
 
-        self.attack_cooldown = max(0, self.attack_cooldown - dt)
+        self.attack_cooldown = max(0, self.attack_cooldown - dt * self.get_attack_speed_multiplier())
         self.flash_timer = max(0, self.flash_timer - dt)
 
     def attack(self, targets, dt):
         """通过武器发射子弹，返回 Projectile 列表"""
+        if self.is_attack_blocked():
+            return [], []
+
         if not self.can_attack() or not targets:
             return [], []
 

@@ -10,12 +10,25 @@
 由 CombatSystem 统一处理视觉特效。
 """
 
+from entities.combatants.base import TriggerType
+
+
+class EffectType:
+    """效果类型常量 - 武器和系统层共用，保证字典 key 一致"""
+    EXPLOSION = "explosion"
+    PARTICLE = "particle"
+    HIT_PARTICLES = "hit_particles"
+    STUN = "stun"
+    BURN = "burn"
+    FREEZE = "freeze"
+
 
 class DamageResult:
     """武器伤害结果 - 纯数据，不含 UI 逻辑
 
     CombatSystem 根据此数据创建浮动文字和粒子特效。
     effects 字典列表描述武器专属特效（如爆炸、飞刀命中光效）。
+    类型常量见 EffectType。
     """
     __slots__ = ('target', 'damage', 'is_crit', 'effects')
 
@@ -23,7 +36,7 @@ class DamageResult:
         self.target = target
         self.damage = damage
         self.is_crit = is_crit
-        self.effects = effects or []  # list of dict: {"type": "explosion"|"particle", ...}
+        self.effects = effects or []  # list of dict: {"type": EffectType.XXX, ...}
 
 
 UPGRADE_ONCE = 1      # 只能选一次的升级
@@ -62,7 +75,11 @@ class Weapon:
     color = (200, 200, 200)
     damage = 10
     fire_rate = 25
+    is_ranged = False  # 子类设 True 表示远程武器（attack 返回投射物）
     upgrades = []
+
+    def __init__(self):
+        self.pending_projectiles = []  # 武器 update 产生的待发射投射物
 
     def attack(self, attacker, targets, dt=None):
         """执行攻击 - 远程返回投射物列表，近战返回空列表
@@ -94,7 +111,7 @@ class Weapon:
         if attacker and hasattr(attacker, 'trigger'):
             for r in results:
                 if r.target is not None and r.damage > 0:
-                    attacker.trigger(attacker.ON_DEAL_DAMAGE, target=r.target, damage=r.damage)
+                    attacker.trigger(TriggerType.ON_DEAL_DAMAGE, target=r.target, damage=r.damage)
         return results
 
     def _deal_damage(self, target, targets, attacker, proj):

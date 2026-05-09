@@ -11,10 +11,11 @@ class MissileProjectile(Projectile):
     """导弹 - 追踪飞行，命中后标记死亡，爆炸由武器处理"""
 
     def __init__(self, x, y, angle, speed, weapon=None, owner=None,
-                 homing=False, targets=None):
+                 homing=False, targets=None, turn_rate=0):
         super().__init__(x, y, angle, speed, weapon=weapon, owner=owner)
         self.homing = homing
         self.targets_ref = targets or []
+        self.turn_rate = turn_rate  # 0=瞬间转向，>0=每秒最大转向弧度
         self.size = MissileConfig.SIZE
         self.max_lifetime = MissileConfig.MAX_LIFETIME
         self.lifetime = 0
@@ -35,7 +36,20 @@ class MissileProjectile(Projectile):
                         min_dist = d
                         nearest = m
             if nearest:
-                self.angle = math.atan2(nearest.y - self.y, nearest.x - self.x)
+                target_angle = math.atan2(nearest.y - self.y, nearest.x - self.x)
+                if self.turn_rate > 0:
+                    # 渐进转向
+                    diff = target_angle - self.angle
+                    # 归一化到 [-pi, pi]
+                    diff = (diff + math.pi) % (2 * math.pi) - math.pi
+                    max_turn = self.turn_rate * dt
+                    if abs(diff) <= max_turn:
+                        self.angle = target_angle
+                    else:
+                        self.angle += max_turn if diff > 0 else -max_turn
+                else:
+                    # 瞬间转向（玩家导弹）
+                    self.angle = target_angle
 
         self.x += math.cos(self.angle) * self.speed * dt
         self.y += math.sin(self.angle) * self.speed * dt

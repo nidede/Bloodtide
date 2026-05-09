@@ -14,7 +14,7 @@
 """
 import math
 from core.config import Color, WORLD_WIDTH, WORLD_HEIGHT, PlayerConfig
-from entities.combatants.base import CombatEntity
+from entities.combatants.base import CombatEntity, TriggerType
 from entities.weapons.base import UPGRADE_ONCE
 
 
@@ -71,7 +71,7 @@ class Character(CombatEntity):
         self._upgrade_counts = {}
 
         # 注册效果
-        self.add_effect(self.ON_DEAL_DAMAGE, self._lifesteal_effect)
+        self.add_effect(TriggerType.ON_DEAL_DAMAGE, self._lifesteal_effect)
 
     def gain_xp(self, amount):
         """获得经验，升级时调用 on_level_up()
@@ -84,7 +84,7 @@ class Character(CombatEntity):
         while self.xp >= self.xp_to_next:
             self.xp -= self.xp_to_next
             self.level += 1
-            self.xp_to_next = int(self.xp_to_next * 1.4)
+            self.xp_to_next = int(self.xp_to_next * 1.25)
             self.on_level_up()
             levels += 1
         return levels
@@ -115,6 +115,8 @@ class Character(CombatEntity):
 
     def try_shoot(self, targets, dt):
         """通用射击逻辑"""
+        if self.is_attack_blocked():
+            return []
         if self.cooldown_timer > 0 or not targets or not self.weapon:
             return []
         nearest = self._find_nearest(targets)
@@ -140,7 +142,8 @@ class Character(CombatEntity):
 
     def _update_timers(self, dt):
         """更新通用计时器"""
-        self.cooldown_timer = max(0, self.cooldown_timer - dt)
+        self.update_status(dt)
+        self.cooldown_timer = max(0, self.cooldown_timer - dt * self.get_attack_speed_multiplier())
         self.invincible_timer = max(0, self.invincible_timer - dt)
         self.dash_cooldown = max(0, self.dash_cooldown - dt)
 

@@ -2,7 +2,7 @@
 导弹 - 范围爆炸，可追踪
 """
 import math
-from ..base import Weapon, Upgrade, DamageResult, UPGRADE_ONCE
+from ..base import Weapon, Upgrade, DamageResult, UPGRADE_ONCE, EffectType
 from core.config import Color, MissileConfig
 from entities.projectiles import MissileProjectile
 
@@ -13,6 +13,7 @@ class Missile(Weapon):
     color = Color.ORANGE
     damage = 30
     fire_rate = 45
+    is_ranged = True
     projectile_count = 1
     projectile_speed = 5
     explosion_radius = 75
@@ -60,7 +61,7 @@ class Missile(Weapon):
 
         # 爆炸特效数据
         results.append(DamageResult(None, 0, effects=[{
-            "type": "explosion",
+            "type": EffectType.EXPLOSION,
             "x": proj.x, "y": proj.y,
             "radius": self.explosion_radius,
         }]))

@@ -1,13 +1,14 @@
 """Boss怪物 - 每5波出现"""
+import math
 import pygame
 from core.config import Color
 from .base import BaseMonster, MonsterRegistry
-from entities.weapons.enemy.melee import EnemyMeleeWeapon
+from entities.weapons.enemy.homing import BossHomingRifle
 
 
 @MonsterRegistry.register
 class BossMonster(BaseMonster):
-    """Boss怪物 - 超高属性"""
+    """Boss怪物 - 超高属性，发射追踪弹"""
 
     TYPE = "boss"
     HP_BASE = 500
@@ -22,7 +23,23 @@ class BossMonster(BaseMonster):
     XP_PER_LVL = 50
     MIN_WAVE = 5
     SPAWN_WEIGHT = 0.08
-    weapon_class = EnemyMeleeWeapon
+    ATTACK_COOLDOWN = 1.5  # 追踪弹攻击间隔（秒）
+    weapon_class = BossHomingRifle
+
+    def attack(self, targets, dt):
+        """发射追踪弹"""
+        if self.is_attack_blocked():
+            return [], []
+
+        if not self.can_attack() or not targets:
+            return [], []
+
+        target = min(targets, key=lambda t: math.hypot(t.x - self.x, t.y - self.y))
+        self.angle = math.atan2(target.y - self.y, target.x - self.x)
+        self.attack_cooldown = self.ATTACK_COOLDOWN
+
+        projs = self.weapon.attack(self, targets, dt)
+        return projs, []
     
     def _draw_shape(self, surface, color, sx, sy):
         """大菱形 + 外发光 + 皇冠装饰"""

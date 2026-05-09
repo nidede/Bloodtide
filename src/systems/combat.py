@@ -4,6 +4,7 @@
 import math
 import random
 from core.config import Color, CombatConfig, MissileConfig
+from entities.weapons.base import EffectType
 
 
 class CombatSystem:
@@ -31,10 +32,14 @@ class CombatSystem:
         """
         raw_damage_to_player = 0
 
-        # 0. 玩家武器持续效果（如飞刀旋转）
+        # 0. 玩家武器持续效果（如飞刀旋转、召唤炮台）
         if player.weapon:
             results = player.weapon.update(player, monsters, dt)
             self._process_damage_results(results, particles, floating_texts)
+            # 武器 update 产生的投射物加入主碰撞列表
+            if player.weapon.pending_projectiles:
+                projectiles.extend(player.weapon.pending_projectiles)
+                player.weapon.pending_projectiles.clear()
 
         # 1. 投射物碰撞
         proj_results = self.update_projectiles(projectiles, monsters, [player], dt)
@@ -45,6 +50,9 @@ class CombatSystem:
         monster_results = self.update_monsters(monsters, player, projectiles, dt, is_visible)
         raw_damage_to_player += sum(r.damage for r in monster_results if r.target is player and r.damage > 0)
         self._process_damage_results(monster_results, particles, floating_texts)
+
+        # 3. 怪物状态效果浮动文字（燃烧扣血等）
+        self._flush_pending_texts(monsters, floating_texts)
 
         # 3. 死亡处理
         total_levels = self.process_dead_monsters(monsters, [player], particles, floating_texts)
@@ -92,14 +100,14 @@ class CombatSystem:
 
                         # 武器没有自带特效时，添加默认命中粒子
                         has_own_effects = any(
-                            eff["type"] in ("explosion", "hit_particles", "particle")
+                            eff["type"] in (EffectType.EXPLOSION, EffectType.HIT_PARTICLES, EffectType.PARTICLE)
                             for r in results for eff in r.effects
                         )
                         if not has_own_effects:
                             for r in results:
                                 if r.target is not None:
                                     r.effects.append({
-                                        "type": "hit_particles",
+                                         "type": EffectType.HIT_PARTICLES,
                                         "x": proj.x, "y": proj.y,
                                     })
                                     break
@@ -118,7 +126,7 @@ class CombatSystem:
                 monster.update(player, dt)
             else:
                 # 屏幕外：简单追击
-                monster.attack_cooldown = max(0, monster.attack_cooldown - dt)
+                monster.attack_cooldown = max(0, monster.attack_cooldown - dt * monster.get_attack_speed_multiplier())
                 monster.flash_timer = max(0, monster.flash_timer - dt)
                 dx = player.x - monster.x
                 dy = player.y - monster.y
@@ -134,32 +142,71 @@ class CombatSystem:
         return all_results
 
     def _process_damage_results(self, results, particles, floating_texts):
-        """从 DamageResult 数据创建视觉特效"""
+        """从 DamageResult 数据创建视觉特效
+
+        三阶段处理：伤害修正 → 浮动文字 → 状态附加
+        """
         if not results:
             return
         for r in results:
-            # 伤害浮动文字（只在实际造成伤害时显示）
+            # 阶段1：浮动文字（damage 和 is_crit 由武器确定）
+
+            # 阶段2：浮动文字（此时 damage 和 is_crit 已确定）
             if r.target is not None and r.damage > 0:
                 self._create_damage_text(r.target, r.damage, r.is_crit, floating_texts)
 
-            # 武器专属特效
+            # 阶段3：状态附加类效果 + 视觉特效
             for eff in r.effects:
-                if eff["type"] == "particle":
+                if eff["type"] == EffectType.PARTICLE:
                     particles.append(self._create_particle(
                         eff["x"], eff["y"], eff.get("color", Color.WHITE),
                         speed=eff.get("speed", 120),
                         lifetime=eff.get("lifetime", 0.25),
                         size=eff.get("size", 3)
                     ))
-                elif eff["type"] == "explosion":
+                elif eff["type"] == EffectType.EXPLOSION:
                     self._create_explosion(eff["x"], eff["y"], eff["radius"], particles)
-                elif eff["type"] == "hit_particles":
+                elif eff["type"] == EffectType.HIT_PARTICLES:
                     for _ in range(CombatConfig.HIT_PARTICLE_COUNT):
                         particles.append(
                             self._create_particle(eff["x"], eff["y"], Color.YELLOW,
                                                   speed=CombatConfig.HIT_PARTICLE_SPEED,
                                                   lifetime=CombatConfig.HIT_PARTICLE_LIFETIME)
                         )
+                elif eff["type"] == EffectType.STUN and r.target is not None:
+                    if hasattr(r.target, 'add_status'):
+                        from entities.combatants.base import StunEffect
+                        r.target.add_status(StunEffect(eff.get("duration", 1.0)))
+                elif eff["type"] == EffectType.BURN and r.target is not None:
+                    if hasattr(r.target, 'add_status'):
+                        from entities.combatants.base import BurnEffect
+                        # 尝试叠加已有燃烧，没有则新建
+                        existing = None
+                        for se in r.target.status_effects:
+                            if isinstance(se, BurnEffect):
+                                existing = se
+                                break
+                        if existing:
+                            existing.try_stack()
+                        else:
+                            r.target.add_status(BurnEffect(eff.get("dps", 1)))
+                elif eff["type"] == EffectType.FREEZE and r.target is not None:
+                    if hasattr(r.target, 'add_status'):
+                        from entities.combatants.base import FreezeEffect
+                        # 已有冰冻则刷新时长，不叠加
+                        existing = None
+                        for se in r.target.status_effects:
+                            if isinstance(se, FreezeEffect):
+                                existing = se
+                                break
+                        if existing:
+                            existing.duration = eff.get("duration", 5.0)
+                        else:
+                            r.target.add_status(FreezeEffect(
+                                duration=eff.get("duration", 5.0),
+                                speed_mult=eff.get("speed_mult", 0.5),
+                                atk_mult=eff.get("atk_mult", 0.5),
+                            ))
 
     def _create_damage_text(self, target, damage, is_crit, floating_texts):
         """创建伤害浮动文字"""
@@ -173,6 +220,21 @@ class CombatSystem:
             target.y - target.size - 5,
             text, color, size
         ))
+
+    def _flush_pending_texts(self, entities, floating_texts):
+        """收集实体上状态效果产生的浮动文字（如燃烧扣血）"""
+        if floating_texts is None:
+            return
+        for entity in entities:
+            if not entity._pending_texts:
+                continue
+            for text, color, size in entity._pending_texts:
+                floating_texts.append(self._text_factory(
+                    entity.x + random.randint(-8, 8),
+                    entity.y - entity.size - 5,
+                    text, color, size
+                ))
+            entity._pending_texts.clear()
 
     def _create_explosion(self, x, y, radius, particles):
         """创建导弹爆炸粒子"""
